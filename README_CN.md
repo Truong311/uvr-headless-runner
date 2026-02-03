@@ -1,8 +1,11 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/Anjok07/ultimatevocalremovergui/master/gui_data/img/UVR-banner.png" alt="UVR Banner" width="600"/>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://readme-typing-svg.demolab.com?font=Fira+Code&weight=700&size=28&duration=3000&pause=1000&color=A78BFA&center=true&vCenter=true&width=500&lines=%F0%9F%8E%B5+UVR+Headless+Runner;%E9%9F%B3%E9%A2%91%E5%88%86%E7%A6%BB%E5%91%BD%E4%BB%A4%E8%A1%8C%E5%B7%A5%E5%85%B7">
+    <img alt="UVR Headless Runner" src="https://readme-typing-svg.demolab.com?font=Fira+Code&weight=700&size=28&duration=3000&pause=1000&color=7C3AED&center=true&vCenter=true&width=500&lines=%F0%9F%8E%B5+UVR+Headless+Runner;%E9%9F%B3%E9%A2%91%E5%88%86%E7%A6%BB%E5%91%BD%E4%BB%A4%E8%A1%8C%E5%B7%A5%E5%85%B7">
+  </picture>
 </p>
 
-<h1 align="center">🎵 UVR Headless Runner</h1>
+<h3 align="center">🎧 从任意音频中分离人声、乐器、鼓、贝斯等</h3>
 
 <p align="center">
   <strong>基于 UVR 的命令行音频分离工具</strong>

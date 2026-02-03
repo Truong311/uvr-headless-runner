@@ -1,8 +1,11 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/Anjok07/ultimatevocalremovergui/master/gui_data/img/UVR-banner.png" alt="UVR Banner" width="600"/>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://readme-typing-svg.demolab.com?font=Fira+Code&weight=700&size=28&duration=3000&pause=1000&color=A78BFA&center=true&vCenter=true&width=500&lines=%F0%9F%8E%B5+UVR+Headless+Runner;Audio+Source+Separation+CLI">
+    <img alt="UVR Headless Runner" src="https://readme-typing-svg.demolab.com?font=Fira+Code&weight=700&size=28&duration=3000&pause=1000&color=7C3AED&center=true&vCenter=true&width=500&lines=%F0%9F%8E%B5+UVR+Headless+Runner;Audio+Source+Separation+CLI">
+  </picture>
 </p>
 
-<h1 align="center">🎵 UVR Headless Runner</h1>
+<h3 align="center">🎧 Separate vocals, instruments, drums, bass & more from any audio</h3>
 
 <p align="center">
   <strong>Command-line audio source separation powered by UVR</strong>
