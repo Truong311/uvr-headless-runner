@@ -1,0 +1,59 @@
+[tool.poetry]
+name = "uvr-headless-runner"
+version = "1.0.0"
+description = "Headless runners for Ultimate Vocal Remover - MDX/Roformer/SCNet/Demucs"
+authors = ["UVR Headless Runner Contributors"]
+readme = "README.md"
+license = "MIT"
+package-mode = false
+
+[tool.poetry.dependencies]
+python = "^3.9,<3.11"
+
+# Core dependencies
+torch = "^2.0"
+torchaudio = "^2.0"
+torchvision = "^0.15"
+numpy = "1.23.5"
+scipy = "1.9.3"
+librosa = "0.9.2"
+soundfile = "0.11.0"
+audioread = "3.0.0"
+resampy = "0.4.2"
+
+# Model dependencies
+pytorch-lightning = "2.0.0"
+einops = "0.6.0"
+ml-collections = "0.1.1"
+omegaconf = "2.2.3"
+onnx = "*"
+onnx2pytorch = "*"
+
+# Roformer/SCNet specific
+rotary-embedding-torch = "^0.3"
+beartype = "^0.14"
+transformers = "^4.35"
+
+# Audio processing
+julius = "0.2.7"
+pydub = "0.25.1"
+pyrubberband = "0.3.0"
+
+# Utilities
+PyYAML = "6.0"
+natsort = "8.2.0"
+tqdm = "*"
+
+# Optional - for ONNX GPU inference
+# Install manually: pip install onnxruntime-gpu
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^7.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.scripts]
+mdx-runner = "mdx_headless_runner:main"
+demucs-runner = "demucs_headless_runner:main"
