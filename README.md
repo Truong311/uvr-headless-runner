@@ -1,379 +1,400 @@
-# UVR Headless Runner
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Anjok07/ultimatevocalremovergui/master/gui_data/img/UVR-banner.png" alt="UVR Banner" width="600"/>
+</p>
 
-[中文版](README_CN.md) | **English**
+<h1 align="center">🎵 UVR Headless Runner</h1>
 
-## Design Philosophy
+<p align="center">
+  <strong>Command-line audio source separation powered by UVR</strong>
+</p>
 
-> **This project is a headless automation layer for Ultimate Vocal Remover (UVR).**
-> 
-> It does **not** reimplement any separation logic.
-> 
-> It **exactly replicates** UVR GUI behavior, including model loading, parameter fallback, and auto-detection logic.
-> 
-> **If a model works in the UVR GUI, it is expected to work here — without additional configuration.**
+<p align="center">
+  <a href="https://github.com/chyinan/uvr-headless-runner/blob/master/LICENSE">
+    <img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT">
+  </a>
+  <a href="https://www.python.org/downloads/">
+    <img src="https://img.shields.io/badge/python-3.9+-green.svg" alt="Python 3.9+">
+  </a>
+  <a href="https://pytorch.org/">
+    <img src="https://img.shields.io/badge/PyTorch-2.0+-ee4c2c.svg" alt="PyTorch">
+  </a>
+  <a href="https://github.com/chyinan/uvr-headless-runner">
+    <img src="https://img.shields.io/badge/platform-Windows%20|%20Linux%20|%20macOS-lightgrey.svg" alt="Platform">
+  </a>
+</p>
 
----
-
-## Overview
-
-This project provides two headless runners for audio source separation without the GUI:
-
-- **`mdx_headless_runner.py`** - Supports MDX-Net, MDX-C, Roformer, SCNet models
-- **`demucs_headless_runner.py`** - Supports Demucs models (v1/v2/v3/v4)
-
-> ⚠️ **VR Architecture** is intentionally not supported — no current demand from the developer.
-
----
-
-## Requirements
-
-- **Python**: 3.9.x (3.10+ not fully tested)
-- **GPU**: NVIDIA GPU with CUDA support (optional but recommended)
-- **OS**: Windows / Linux / macOS
+<p align="center">
+  <a href="README_CN.md">🇨🇳 中文</a> | <strong>🇬🇧 English</strong>
+</p>
 
 ---
 
-## Installation
+## ✨ Features
 
-### Option 1: Using Poetry (Recommended)
+<table>
+<tr>
+<td width="50%">
+
+### 🎸 MDX-Net Runner
+- MDX-Net / MDX-C models
+- **Roformer** (MelBandRoformer, BSRoformer)
+- **SCNet** (Sparse Compression Network)
+- ONNX & PyTorch checkpoints
+
+</td>
+<td width="50%">
+
+### 🥁 Demucs Runner
+- Demucs v1 / v2 / v3 / v4
+- **htdemucs** / **htdemucs_ft**
+- **6-stem separation** (Guitar, Piano)
+- Auto model download
+
+</td>
+</tr>
+</table>
+
+### 🚀 Highlights
+
+| Feature | Description |
+|---------|-------------|
+| 🎯 **GUI-Identical** | Exactly replicates UVR GUI behavior |
+| ⚡ **GPU Accelerated** | NVIDIA CUDA & AMD DirectML support |
+| 🔧 **Zero Config** | Auto-detect model parameters |
+| 📦 **Batch Ready** | Perfect for automation & pipelines |
+| 🎚️ **Bit Depth Control** | 16/24/32-bit PCM, 32/64-bit float |
+
+---
+
+## 📖 Design Philosophy
+
+> <img src="https://img.shields.io/badge/IMPORTANT-red?style=flat-square" alt="Important"/>
+> 
+> **This project is a headless automation layer for [Ultimate Vocal Remover](https://github.com/Anjok07/ultimatevocalremovergui).**
+> 
+> It does **NOT** reimplement any separation logic.  
+> It **EXACTLY REPLICATES** UVR GUI behavior — model loading, parameter fallback, and auto-detection.
+> 
+> **✅ If a model works in UVR GUI, it works here — no extra config needed.**
+
+---
+
+## 📋 Requirements
+
+| Component | Requirement |
+|-----------|-------------|
+| **Python** | 3.9.x (3.10+ not fully tested) |
+| **GPU** | NVIDIA CUDA or AMD DirectML *(optional)* |
+| **OS** | Windows / Linux / macOS |
+
+---
+
+## 🔧 Installation
+
+<details>
+<summary><b>📦 Option 1: Poetry (Recommended)</b></summary>
 
 ```bash
-# Clone the repository
-git clone https://github.com/YOUR_USERNAME/uvr-headless-runner.git
+# Clone repository
+git clone https://github.com/chyinan/uvr-headless-runner.git
 cd uvr-headless-runner
 
 # Install dependencies
 poetry install
 
-# For GPU support, install PyTorch with CUDA
+# GPU support (NVIDIA)
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
 
-# Install ONNX Runtime GPU (optional, for ONNX models)
+# ONNX GPU (optional)
 pip install onnxruntime-gpu
 ```
 
-### Option 2: Using pip
+</details>
+
+<details>
+<summary><b>📦 Option 2: pip + venv</b></summary>
 
 ```bash
-# Clone the repository
-git clone https://github.com/YOUR_USERNAME/uvr-headless-runner.git
+# Clone repository
+git clone https://github.com/chyinan/uvr-headless-runner.git
 cd uvr-headless-runner
 
 # Create virtual environment
 python -m venv venv
 source venv/bin/activate  # Linux/macOS
-# or: venv\Scripts\activate  # Windows
+# venv\Scripts\activate   # Windows
 
 # Install dependencies
 pip install -r requirements.txt
 
-# For GPU support, install PyTorch with CUDA
+# GPU support (NVIDIA)
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
-
-# Install ONNX Runtime GPU (optional)
-pip install onnxruntime-gpu
 ```
 
-### Verify Installation
+</details>
+
+<details>
+<summary><b>🔴 AMD GPU (DirectML)</b></summary>
 
 ```bash
-# Check PyTorch and CUDA
-python -c "import torch; print(f'PyTorch: {torch.__version__}'); print(f'CUDA: {torch.cuda.is_available()}')"
-
-# Check GPU
-python -c "import torch; print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'No GPU')"
-```
-
-### AMD GPU Support (DirectML)
-
-For AMD GPU users, DirectML acceleration is supported:
-
-```bash
-# Install torch-directml
+# Install DirectML support
 pip install torch-directml
+
+# Use with --directml flag
+python mdx_headless_runner.py -m model.ckpt -i song.wav -o output/ --directml
 ```
 
-The code will automatically detect and use DirectML if available. No code changes needed!
+> ⚠️ DirectML is experimental. NVIDIA CUDA recommended for best performance.
 
-> ⚠️ DirectML support is experimental. NVIDIA CUDA is recommended for best performance.
+</details>
 
----
+### ✅ Verify Installation
 
-## Models
-
-Download models from [UVR Model Database](https://github.com/TRvlvr/model_repo/releases) or use models from an existing UVR installation:
-
-- **MDX models**: `C:\Users\{user}\AppData\Local\Programs\Ultimate Vocal Remover\models\MDX_Net_Models\`
-- **Demucs models**: Downloaded automatically on first use
+```bash
+python -c "import torch; print(f'PyTorch: {torch.__version__}'); print(f'CUDA: {torch.cuda.is_available()}')"
+```
 
 ---
 
-## MDX-Net Headless Runner
+## 🎼 Quick Start
 
-### Quick Start
+### MDX-Net / Roformer / SCNet
 
-```powershell
-# Basic usage
-poetry run python mdx_headless_runner.py -m "model.ckpt" -i "input.wav" -o "output/" --gpu
+```bash
+# Basic separation
+python mdx_headless_runner.py -m "model.ckpt" -i "song.flac" -o "output/" --gpu
+
+# Vocals only (24-bit)
+python mdx_headless_runner.py -m "model.ckpt" -i "song.flac" -o "output/" --gpu --vocals-only --wav-type PCM_24
+```
+
+### Demucs
+
+```bash
+# All 4 stems
+python demucs_headless_runner.py --model htdemucs --input "song.flac" --output "output/" --gpu
 
 # Vocals only
-poetry run python mdx_headless_runner.py -m "model.ckpt" -i "input.wav" -o "output/" --gpu --vocals-only
+python demucs_headless_runner.py --model htdemucs --input "song.flac" --output "output/" --gpu --stem Vocals --primary-only
 ```
+
+---
+
+## 🎛️ MDX-Net Runner
 
 ### Command Line Arguments
 
 | Argument | Short | Default | Description |
 |----------|-------|---------|-------------|
-| `--model` | `-m` | **Required** | Model file path (.ckpt) |
-| `--input` | `-i` | **Required** | Input audio file path |
-| `--output` | `-o` | **Required** | Output directory path |
-| `--name` | `-n` | Auto | Output file base name |
-| `--json` | - | - | Model JSON config file path |
-| `--gpu` | - | Auto-detect | Use GPU (NVIDIA CUDA) |
-| `--cpu` | - | - | Force CPU |
-| `--directml` | - | - | Use DirectML (AMD GPU) |
-| `--device` | `-d` | `0` | GPU device ID |
-| `--segment-size` | - | `256` | Segment size |
-| `--overlap` | - | `0.25` | MDX overlap (0.25-0.99) |
-| `--overlap-mdxc` | - | `2` | MDX-C/Roformer overlap (2-50) |
-| `--batch-size` | - | `1` | Batch size |
-| `--wav-type` | - | `PCM_24` | Output bit depth: PCM_16, PCM_24, PCM_32, FLOAT (32-bit float), DOUBLE (64-bit float) |
-| `--quiet` | `-q` | - | Quiet mode |
+| `--model` | `-m` | **Required** | Model file path (.ckpt/.onnx) |
+| `--input` | `-i` | **Required** | Input audio file |
+| `--output` | `-o` | **Required** | Output directory |
+| `--gpu` | | Auto | Use NVIDIA CUDA |
+| `--directml` | | | Use AMD DirectML |
+| `--overlap` | | `0.25` | MDX overlap (0.25-0.99) |
+| `--overlap-mdxc` | | `2` | MDX-C/Roformer overlap (2-50) |
+| `--wav-type` | | `PCM_24` | Output: PCM_16/24/32, FLOAT, DOUBLE |
+| `--vocals-only` | | | Output vocals only |
+| `--instrumental-only` | | | Output instrumental only |
 
-#### Output Control
+<details>
+<summary><b>📋 All Arguments</b></summary>
 
 | Argument | Description |
 |----------|-------------|
+| `--name` `-n` | Output filename base |
+| `--json` | Model JSON config |
+| `--cpu` | Force CPU |
+| `--device` `-d` | GPU device ID |
+| `--segment-size` | Segment size (default: 256) |
+| `--batch-size` | Batch size (default: 1) |
 | `--primary-only` | Save primary stem only |
 | `--secondary-only` | Save secondary stem only |
-| `--vocals-only` | Save vocals only (= --primary-only) |
-| `--instrumental-only` | Save instrumental only (= --secondary-only) |
-| `--dry-only` | Save Dry only (= --primary-only) |
-| `--no-dry-only` | Save No Dry only (= --secondary-only) |
-| `--stem` | Select stem (MDX-C only: all/vocals/drums/bass/other) |
+| `--stem` | MDX-C stem select |
+| `--quiet` `-q` | Quiet mode |
+
+</details>
 
 ### Examples
 
-```powershell
-# Roformer model with custom overlap
-poetry run python mdx_headless_runner.py \
+```bash
+# Roformer with custom overlap
+python mdx_headless_runner.py \
     -m "MDX23C-8KFFT-InstVoc_HQ.ckpt" \
-    -i "song.flac" \
-    -o "output/" \
-    --gpu \
-    --overlap-mdxc 8
+    -i "song.flac" -o "output/" \
+    --gpu --overlap-mdxc 8
 
-# Instrumental only
-poetry run python mdx_headless_runner.py \
-    -m "model.ckpt" \
-    -i "song.flac" \
-    -o "output/" \
-    --gpu \
-    --instrumental-only
+# 32-bit float output
+python mdx_headless_runner.py \
+    -m "model.ckpt" -i "song.flac" -o "output/" \
+    --gpu --wav-type FLOAT
 ```
 
 ---
 
-## Demucs Headless Runner
-
-### Quick Start
-
-```powershell
-# Output all stems (equivalent to GUI "All Stems")
-poetry run python demucs_headless_runner.py --model htdemucs --input "song.flac" --output "output/" --gpu
-
-# Vocals only (equivalent to GUI "Vocals" + "Primary Stem Only")
-poetry run python demucs_headless_runner.py --model htdemucs --input "song.flac" --output "output/" --gpu --stem Vocals --primary-only
-```
+## 🥁 Demucs Runner
 
 ### Supported Models
 
-| Model | Version | Stems | Description |
-|-------|---------|-------|-------------|
-| `htdemucs` | v4 | 4 | Drums, Bass, Other, Vocals |
-| `htdemucs_ft` | v4 | 4 | Fine-tuned, better quality |
-| `htdemucs_6s` | v4 | 6 | Drums, Bass, Other, Vocals, Guitar, Piano |
-| `hdemucs_mmi` | v4 | 4 | Standard version |
-| `mdx_extra_q` | v3 | 4 | v3 version |
+| Model | Version | Stems | Quality |
+|-------|---------|-------|---------|
+| `htdemucs` | v4 | 4 | ⭐⭐⭐ |
+| `htdemucs_ft` | v4 | 4 | ⭐⭐⭐⭐ Fine-tuned |
+| `htdemucs_6s` | v4 | 6 | ⭐⭐⭐⭐ +Guitar/Piano |
+| `hdemucs_mmi` | v4 | 4 | ⭐⭐⭐ |
+| `mdx_extra_q` | v3 | 4 | ⭐⭐⭐ |
 
 ### Command Line Arguments
 
 | Argument | Short | Default | Description |
 |----------|-------|---------|-------------|
 | `--model` | `-m` | **Required** | Model name or path |
-| `--input` | `-i` | **Required** | Input audio file path |
-| `--output` | `-o` | **Required** | Output directory path |
-| `--name` | `-n` | Auto | Output file base name |
-| `--gpu` | - | Auto-detect | Use GPU (NVIDIA CUDA) |
-| `--cpu` | - | - | Force CPU |
-| `--directml` | - | - | Use DirectML (AMD GPU) |
-| `--device` | `-d` | `0` | GPU device ID |
-| `--segment` | - | `Default` | Segment size (Default/1-100+, supports custom values) |
-| `--shifts` | - | `2` | Number of time shifts |
-| `--overlap` | - | `0.25` | Overlap ratio |
-| `--stem` | - | - | Select stem (Vocals/Other/Bass/Drums/Guitar/Piano) |
-| `--wav-type` | - | `PCM_24` | Output bit depth: PCM_16, PCM_24, PCM_32, FLOAT (32-bit float), DOUBLE (64-bit float) |
-| `--primary-only` | - | - | Output primary stem only |
-| `--secondary-only` | - | - | Output secondary stem only |
-| `--quiet` | `-q` | - | Quiet mode |
+| `--input` | `-i` | **Required** | Input audio file |
+| `--output` | `-o` | **Required** | Output directory |
+| `--gpu` | | Auto | Use NVIDIA CUDA |
+| `--segment` | | Default | Segment size (1-100+) |
+| `--shifts` | | `2` | Time shifts |
+| `--stem` | | | Vocals/Drums/Bass/Other/Guitar/Piano |
+| `--wav-type` | | `PCM_24` | Output bit depth |
+| `--primary-only` | | | Output primary stem only |
+
+### Stem Selection
+
+| GUI Action | CLI Command |
+|------------|-------------|
+| All Stems | *(no --stem)* |
+| Vocals only | `--stem Vocals --primary-only` |
+| Instrumental only | `--stem Vocals --secondary-only` |
 
 ### Examples
 
-```powershell
-# Output all 4 stems
-poetry run python demucs_headless_runner.py \
-    --model htdemucs \
-    --input "song.flac" \
-    --output "output/" \
-    --gpu
-
-# Vocals only (1 file)
-poetry run python demucs_headless_runner.py \
-    --model htdemucs \
-    --input "song.flac" \
-    --output "output/" \
-    --gpu \
-    --stem Vocals \
-    --primary-only
-
-# 6-stem model
-poetry run python demucs_headless_runner.py \
+```bash
+# 6-stem separation
+python demucs_headless_runner.py \
     --model htdemucs_6s \
-    --input "song.flac" \
-    --output "output/" \
+    --input "song.flac" --output "output/" \
     --gpu
-```
 
-### Stem Selection Guide
-
-| GUI Action | CLI Equivalent |
-|------------|----------------|
-| All Stems | Don't specify `--stem` |
-| Vocals | `--stem Vocals` |
-| Vocals + Primary Only | `--stem Vocals --primary-only` |
-| Vocals + Secondary Only | `--stem Vocals --secondary-only` |
-
----
-
-## Output Files
-
-### MDX-Net Models
-
-```
-output/
-├── {filename}_(Vocals).wav      # Primary stem
-└── {filename}_(Instrumental).wav # Secondary stem
-```
-
-### Demucs 4-stem Models
-
-```
-output/
-├── {filename}_(Drums).wav
-├── {filename}_(Bass).wav
-├── {filename}_(Other).wav
-└── {filename}_(Vocals).wav
-```
-
-### Demucs 6-stem Models
-
-```
-output/
-├── {filename}_(Drums).wav
-├── {filename}_(Bass).wav
-├── {filename}_(Other).wav
-├── {filename}_(Vocals).wav
-├── {filename}_(Guitar).wav
-└── {filename}_(Piano).wav
+# High quality with custom segment
+python demucs_headless_runner.py \
+    --model htdemucs_ft \
+    --input "song.flac" --output "output/" \
+    --gpu --segment 85
 ```
 
 ---
 
-## Python API
+## 📁 Output Structure
 
-### MDX Runner
+```
+output/
+├── song_(Vocals).wav        # Vocals
+├── song_(Instrumental).wav  # Instrumental (MDX)
+├── song_(Drums).wav         # Drums (Demucs)
+├── song_(Bass).wav          # Bass (Demucs)
+├── song_(Other).wav         # Other (Demucs)
+├── song_(Guitar).wav        # Guitar (6-stem)
+└── song_(Piano).wav         # Piano (6-stem)
+```
+
+---
+
+## 🐍 Python API
 
 ```python
 from mdx_headless_runner import run_mdx_headless
-
-output_files = run_mdx_headless(
-    model_path='model.ckpt',
-    audio_file='input.wav',
-    export_path='output',
-    use_gpu=True,
-    mdx_segment_size=256,
-    overlap_mdx=0.25,
-    overlap_mdx23=2,
-    verbose=True
-)
-```
-
-### Demucs Runner
-
-```python
 from demucs_headless_runner import run_demucs_headless
 
-output_files = run_demucs_headless(
+# MDX separation
+output = run_mdx_headless(
+    model_path='model.ckpt',
+    audio_file='song.wav',
+    export_path='output',
+    use_gpu=True
+)
+
+# Demucs separation
+output = run_demucs_headless(
     model_path='htdemucs',
-    audio_file='input.wav',
+    audio_file='song.wav',
     export_path='output',
     use_gpu=True,
     demucs_stems='Vocals',
-    primary_only=True,
-    verbose=True
+    primary_only=True
 )
 ```
 
 ---
 
-## Troubleshooting
+## 🔍 Troubleshooting
 
-### GPU Not Working
+<details>
+<summary><b>❌ GPU not detected</b></summary>
 
-```powershell
-# Check CUDA availability
-poetry run python -c "import torch; print(torch.cuda.is_available())"
+```bash
+# Check CUDA
+python -c "import torch; print(torch.cuda.is_available())"
 
-# Check GPU device
-poetry run python -c "import torch; print(torch.cuda.get_device_name(0))"
+# Reinstall PyTorch with CUDA
+pip uninstall torch torchvision torchaudio
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
 ```
 
-### Model Not Found
+</details>
 
-- MDX models default location: `C:\Users\{user}\AppData\Local\Programs\Ultimate Vocal Remover\models\MDX_Net_Models\`
-- Demucs models default location: `...\Demucs_Models\v3_v4_repo\`
+<details>
+<summary><b>❌ Model not found</b></summary>
 
-### Poor Output Quality
+Default locations:
+- **MDX**: `C:\Users\{user}\AppData\Local\Programs\Ultimate Vocal Remover\models\MDX_Net_Models\`
+- **Demucs**: Auto-downloaded to `~/.cache/torch/hub/`
 
-- Ensure using correct model config (`--json` argument)
+</details>
+
+<details>
+<summary><b>❌ Poor output quality</b></summary>
+
 - Try increasing `--overlap` or `--overlap-mdxc`
-- For Demucs, try increasing `--segment`
+- For Demucs, increase `--segment` (e.g., 85)
+- Ensure correct model config with `--json`
+
+</details>
 
 ---
 
-## Acknowledgments
+## 🙏 Acknowledgments
 
-This project is based on [Ultimate Vocal Remover GUI](https://github.com/Anjok07/ultimatevocalremovergui) by:
-- [Anjok07](https://github.com/anjok07) - Core Developer
-- [aufr33](https://github.com/aufr33) - Core Developer
+<table>
+<tr>
+<td align="center">
+<a href="https://github.com/Anjok07/ultimatevocalremovergui">
+<img src="https://img.shields.io/badge/UVR-Ultimate%20Vocal%20Remover-purple?style=for-the-badge" alt="UVR"/>
+</a>
+<br/>
+<sub><b>Anjok07</b> & <b>aufr33</b></sub>
+</td>
+<td align="center">
+<a href="https://github.com/facebookresearch/demucs">
+<img src="https://img.shields.io/badge/Meta-Demucs-blue?style=for-the-badge" alt="Demucs"/>
+</a>
+<br/>
+<sub><b>Facebook Research</b></sub>
+</td>
+<td align="center">
+<a href="https://github.com/kuielab">
+<img src="https://img.shields.io/badge/Kuielab-MDX--Net-green?style=for-the-badge" alt="MDX-Net"/>
+</a>
+<br/>
+<sub><b>Woosung Choi</b></sub>
+</td>
+</tr>
+</table>
 
-Special thanks to:
-- [ZFTurbo](https://github.com/ZFTurbo) - MDX23C models & SCNet implementation
-- [Adefossez & Facebook Research](https://github.com/facebookresearch/demucs) - Demucs AI code
-- [Kuielab & Woosung Choi](https://github.com/kuielab) - MDX-Net AI code
-
-### New Features in This Project
-
-- `mdx_headless_runner.py` - MDX/Roformer/SCNet headless runner
-- `demucs_headless_runner.py` - Demucs headless runner
-- Command-line interface support
-- GPU optimization
+Special thanks to **[ZFTurbo](https://github.com/ZFTurbo)** for MDX23C & SCNet.
 
 ---
 
-## License
-
-This project is licensed under the **MIT License**.
+## 📄 License
 
 ```
 MIT License
@@ -382,12 +403,12 @@ Copyright (c) 2022 Anjok07 (Ultimate Vocal Remover)
 Copyright (c) 2026 UVR Headless Runner Contributors
 ```
 
-See [LICENSE](LICENSE) for full details.
+<p align="center">
+  <a href="LICENSE">View Full License</a>
+</p>
 
-### Third-Party Licenses
+---
 
-| Project | License | Link |
-|---------|---------|------|
-| Ultimate Vocal Remover GUI | MIT | [GitHub](https://github.com/Anjok07/ultimatevocalremovergui) |
-| Demucs | MIT | [GitHub](https://github.com/facebookresearch/demucs) |
-| MDX-Net | MIT | [GitHub](https://github.com/kuielab/mdx-net) |
+<p align="center">
+  <sub>Made with ❤️ for the audio separation community</sub>
+</p>
