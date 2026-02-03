@@ -309,23 +309,29 @@ from mdx_headless_runner import run_mdx_headless
 from demucs_headless_runner import run_demucs_headless
 
 # MDX separation
-output = run_mdx_headless(
+run_mdx_headless(
     model_path='model.ckpt',
     audio_file='song.wav',
     export_path='output',
-    use_gpu=True
+    use_gpu=True,
+    verbose=True  # Print progress
 )
+# Output: output/song_(Vocals).wav, output/song_(Instrumental).wav
 
-# Demucs separation
-output = run_demucs_headless(
+# Demucs separation (vocals only)
+run_demucs_headless(
     model_path='htdemucs',
     audio_file='song.wav',
     export_path='output',
     use_gpu=True,
-    demucs_stems='Vocals',
-    primary_only=True
+    demucs_stems='Vocals',  # or 'All Stems' for all
+    primary_only=True,
+    verbose=True
 )
+# Output: output/song_(Vocals).wav
 ```
+
+> 💡 **Note**: Functions process audio and save to `export_path`. Check output directory for results.
 
 ---
 

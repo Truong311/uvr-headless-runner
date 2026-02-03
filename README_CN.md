@@ -309,23 +309,29 @@ from mdx_headless_runner import run_mdx_headless
 from demucs_headless_runner import run_demucs_headless
 
 # MDX 分离
-output = run_mdx_headless(
+run_mdx_headless(
     model_path='model.ckpt',
     audio_file='song.wav',
     export_path='output',
-    use_gpu=True
+    use_gpu=True,
+    verbose=True  # 打印进度
 )
+# 输出: output/song_(Vocals).wav, output/song_(Instrumental).wav
 
-# Demucs 分离
-output = run_demucs_headless(
+# Demucs 分离（只要人声）
+run_demucs_headless(
     model_path='htdemucs',
     audio_file='song.wav',
     export_path='output',
     use_gpu=True,
-    demucs_stems='Vocals',
-    primary_only=True
+    demucs_stems='Vocals',  # 或 'All Stems' 输出全部
+    primary_only=True,
+    verbose=True
 )
+# 输出: output/song_(Vocals).wav
 ```
+
+> 💡 **说明**: 函数会处理音频并保存到 `export_path`。结果请查看输出目录。
 
 ---
 
