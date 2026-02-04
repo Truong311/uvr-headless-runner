@@ -351,6 +351,73 @@ Errors now include clear explanations and suggestions:
 
 ---
 
+## 📊 CLI Progress Display
+
+All runners feature a **professional CLI progress system** with real-time feedback:
+
+```
+╭──────────────────────────────────────────────────────────────────────────╮
+│                          UVR Audio Separation                            │
+├──────────────────────────────────────────────────────────────────────────┤
+│  Model         │ UVR-MDX-NET Inst HQ 3                                   │
+│  Input         │ song.flac                                               │
+│  Output        │ ./output/                                               │
+│  Device        │ CUDA:0                                                  │
+│  Architecture  │ MDX-Net                                                 │
+╰──────────────────────────────────────────────────────────────────────────╯
+
+⠹ Downloading model: UVR-MDX-NET Inst HQ 3
+  ████████████████████████████████████████ 100% • 245.3 MB • 12.5 MB/s • 0:00:00
+
+✓ Model downloaded
+
+⠹ Running inference
+  ████████████████░░░░░░░░░░░░░░░░░░░░░░░░  42% • 0:01:23 • 0:01:52
+
+✓ Inference complete
+
+╭──────────────────────────────────────────────────────────────────────────╮
+│              ✓ Processing completed in 3:15                              │
+╰──────────────────────────────────────────────────────────────────────────╯
+
+Output files:
+  • output/song_(Vocals).wav
+  • output/song_(Instrumental).wav
+```
+
+### Features
+
+| Feature | Description |
+|---------|-------------|
+| 📥 **Download Progress** | Real-time speed, ETA, and transfer stats for model downloads |
+| 🎯 **Inference Progress** | Chunk-based progress tracking during audio processing |
+| ⏱️ **Time Estimates** | Elapsed time and remaining time (ETA) display |
+| 🎨 **Rich Output** | Beautiful terminal UI with `rich` library |
+| 🐳 **Docker Compatible** | Works seamlessly inside containers |
+| 📉 **Graceful Fallback** | Falls back to basic output if `rich` unavailable |
+
+### Progress Library Support
+
+The system automatically selects the best available library:
+
+1. **`rich`** (preferred) - Full-featured progress bars with colors
+2. **`tqdm`** (fallback) - Standard progress bars
+3. **Basic** (no deps) - Simple text-based progress
+
+Install `rich` for the best experience:
+```bash
+pip install rich
+```
+
+### Quiet Mode
+
+Disable progress output for scripting:
+```bash
+python mdx_headless_runner.py -m model.ckpt -i song.wav -o output/ --quiet
+```
+
+---
+
 ## 🎛️ MDX-Net Runner
 
 ### Command Line Arguments

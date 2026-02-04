@@ -46,6 +46,11 @@ natsort==8.2.0
 tqdm
 
 # ====================
+# CLI Progress Display
+# ====================
+rich>=13.0.0
+
+# ====================
 # Optional - GPU Support
 # ====================
 # For NVIDIA GPU with CUDA, install separately:

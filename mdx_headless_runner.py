@@ -24,11 +24,18 @@ import sys
 import json
 import math
 import hashlib
+import time
 import torch
 import argparse
 import yaml
 from pathlib import Path
 from types import SimpleNamespace
+
+# Import progress system
+from progress import (
+    ProgressManager, ProgressStage, 
+    create_progress_callbacks, create_download_progress_callback
+)
 
 # 添加项目根目录到路径
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -150,7 +157,7 @@ def download_model(model_name: str) -> tuple:
     return downloader.download_model(model_name, 'mdx')
 
 
-def resolve_model_path(model_identifier: str, verbose: bool = True) -> str:
+def resolve_model_path(model_identifier: str, verbose: bool = True, progress_callback=None) -> str:
     """
     Resolve a model identifier to a local file path.
     
@@ -160,6 +167,7 @@ def resolve_model_path(model_identifier: str, verbose: bool = True) -> str:
     Args:
         model_identifier: File path or model name
         verbose: Whether to print progress
+        progress_callback: Optional download progress callback (current, total, filename)
         
     Returns:
         Local file path to the model
@@ -190,7 +198,7 @@ def resolve_model_path(model_identifier: str, verbose: bool = True) -> str:
     if verbose:
         print(f"Looking up model: {model_identifier}")
     
-    success, result = downloader.ensure_model(model_identifier, 'mdx')
+    success, result = downloader.ensure_model(model_identifier, 'mdx', progress_callback=progress_callback)
     
     if success:
         if verbose:
@@ -727,24 +735,42 @@ def _apply_config(model_data, config, kwargs, verbose=False, model_path=None):
         model_data.is_karaoke = config.get('is_karaoke', False)
 
 
-def create_process_data(audio_file, export_path, audio_file_base=None, **kwargs):
-    """创建 process_data 字典"""
+def create_process_data(audio_file, export_path, audio_file_base=None, 
+                        progress_manager: ProgressManager = None, **kwargs):
+    """
+    创建 process_data 字典
+    
+    Args:
+        audio_file: 输入音频文件路径
+        export_path: 输出目录路径
+        audio_file_base: 输出文件基名
+        progress_manager: 进度管理器实例（可选）
+        **kwargs: 其他参数
+    """
     if audio_file_base is None:
         audio_file_base = os.path.splitext(os.path.basename(audio_file))[0]
     
     verbose = kwargs.get('verbose', False)
     
-    def noop_progress(step=0, inference_iterations=0):
-        pass
-    
-    def write_console(progress_text='', base_text=''):
-        if verbose:
-            msg = f"{base_text}{progress_text}".strip()
-            if msg:
-                print(msg)
-    
-    def noop_iteration():
-        pass
+    # 如果提供了 progress_manager，使用它创建回调
+    if progress_manager is not None:
+        callbacks = create_progress_callbacks(progress_manager, total_iterations=100)
+        set_progress_bar = callbacks['set_progress_bar']
+        write_to_console = callbacks['write_to_console']
+        process_iteration = callbacks['process_iteration']
+    else:
+        # 无进度管理器时使用简单的回调
+        def set_progress_bar(step=0, inference_iterations=0):
+            pass
+        
+        def write_to_console(progress_text='', base_text=''):
+            if verbose:
+                msg = f"{base_text}{progress_text}".strip()
+                if msg:
+                    print(msg)
+        
+        def process_iteration():
+            pass
     
     def noop_cache_callback(process_method, model_name=None):
         return (None, None)
@@ -757,9 +783,9 @@ def create_process_data(audio_file, export_path, audio_file_base=None, **kwargs)
         'export_path': export_path,
         'audio_file_base': audio_file_base,
         'audio_file': audio_file,
-        'set_progress_bar': noop_progress,
-        'write_to_console': write_console,
-        'process_iteration': noop_iteration,
+        'set_progress_bar': set_progress_bar,
+        'write_to_console': write_to_console,
+        'process_iteration': process_iteration,
         'cached_source_callback': noop_cache_callback,
         'cached_model_source_holder': noop_cache_holder,
         'list_all_models': [],
@@ -790,6 +816,7 @@ def run_mdx_headless(
     instrumental_only=False,
     stem=None,
     verbose=True,
+    progress_manager: ProgressManager = None,
     **kwargs
 ):
     """
@@ -801,10 +828,23 @@ def run_mdx_headless(
         model_path: 模型文件路径或模型名称（支持自动下载）
         audio_file: 输入音频文件路径
         export_path: 输出目录路径
+        progress_manager: 进度管理器实例（可选）
         ...
     """
+    start_time = time.time()
+    
+    # 如果没有提供 progress_manager，创建一个默认的
+    pm = progress_manager or ProgressManager(verbose=verbose)
+    pm.set_file_name(os.path.basename(audio_file))
+    
     # 解析模型路径（支持模型名称和自动下载）
-    resolved_model_path = resolve_model_path(model_path, verbose=verbose)
+    pm.start_stage(ProgressStage.INITIALIZING, "Resolving model path")
+    # Create download progress callback from progress manager
+    from progress import create_download_progress_callback
+    download_callback = create_download_progress_callback(pm)
+    resolved_model_path = resolve_model_path(model_path, verbose=False, progress_callback=download_callback)
+    pm.set_model_name(os.path.basename(resolved_model_path))
+    pm.finish_stage("Model path resolved")
     
     # 验证输入
     if not os.path.isfile(audio_file):
@@ -827,7 +867,6 @@ def run_mdx_headless(
             raise ValueError(f"Invalid stem: {stem}")
         mdxnet_stem_select = stem_map[stem_lower]
     
-    # 创建 ModelData
     # 转换 wav_type 名称为 soundfile 格式
     wav_type_map = {
         'PCM_U8': 'PCM_U8',
@@ -841,6 +880,8 @@ def run_mdx_headless(
     }
     wav_type = wav_type_map.get(wav_type_set, 'PCM_24')
     
+    # 创建 ModelData
+    pm.start_stage(ProgressStage.LOADING_MODEL, "Loading model configuration")
     model_data = create_model_data(
         resolved_model_path,
         use_gpu=use_gpu if use_gpu is not None else cuda_available,
@@ -859,9 +900,10 @@ def run_mdx_headless(
         vocals_only=vocals_only,
         instrumental_only=instrumental_only,
         mdxnet_stem_select=mdxnet_stem_select,
-        verbose=verbose,
+        verbose=False,
         **kwargs
     )
+    pm.finish_stage("Model configuration loaded")
     
     # 创建 process_data
     if audio_file_base is None:
@@ -871,28 +913,32 @@ def run_mdx_headless(
         audio_file,
         export_path,
         audio_file_base,
+        progress_manager=pm,
         verbose=verbose
     )
     process_data['model_data'] = model_data
     
-    # 打印信息
-    if verbose:
-        print(f"=" * 50)
-        print(f"MDX-Net Headless Runner")
-        print(f"=" * 50)
-        print(f"Model: {resolved_model_path}")
-        print(f"Input: {audio_file}")
-        print(f"Output: {export_path}")
-        print(f"Device: {'GPU' if model_data.is_gpu_conversion >= 0 else 'CPU'}")
-        print(f"Model Type: {'MDX-C/Roformer' if model_data.is_mdx_c else 'MDX-Net'}")
-        print(f"Output Format: {model_data.wav_type_set}")
-        print(f"Primary Stem: {model_data.primary_stem}")
-        print(f"Secondary Stem: {model_data.secondary_stem}")
-        if not model_data.is_mdx_c:
-            print(f"Params: dim_f={model_data.mdx_dim_f_set}, dim_t={2**model_data.mdx_dim_t_set}, n_fft={model_data.mdx_n_fft_scale_set}")
-        print(f"=" * 50)
+    # 打印 header 信息
+    device_str = 'GPU' if model_data.is_gpu_conversion >= 0 else 'CPU'
+    if model_data.is_gpu_conversion >= 0:
+        if is_use_directml:
+            device_str = f"DirectML:{device_set}"
+        else:
+            device_str = f"CUDA:{device_set}"
+    
+    arch_type = 'MDX-C/Roformer' if model_data.is_mdx_c else 'MDX-Net'
+    
+    pm.print_header(
+        model_name=os.path.basename(resolved_model_path),
+        input_file=audio_file,
+        output_path=export_path,
+        device=device_str,
+        arch_type=arch_type
+    )
     
     # 运行分离 - 使用 UVR 原有的类
+    pm.start_stage(ProgressStage.INFERENCE, "Running audio separation", total=100)
+    
     if model_data.is_mdx_c:
         separator = SeperateMDXC(model_data, process_data)
     else:
@@ -900,9 +946,18 @@ def run_mdx_headless(
     
     separator.seperate()
     
+    pm.finish_stage("Audio separation complete")
+    
+    # 记录输出文件
+    for stem_name in [model_data.primary_stem, model_data.secondary_stem]:
+        if stem_name:
+            output_file = os.path.join(export_path, f"{audio_file_base}_({stem_name}).wav")
+            if os.path.isfile(output_file):
+                pm.add_output_file(output_file)
+    
+    elapsed = time.time() - start_time
     if verbose:
-        print(f"\nProcessing complete!")
-        print(f"Output: {export_path}")
+        pm.write_message(f"\n✓ Total processing time: {elapsed:.1f}s", "green")
 
 
 def main():
@@ -1094,67 +1149,70 @@ Examples:
     gpu_fallback_attempted = False
     current_use_gpu = use_gpu
     
-    while True:
-        try:
-            run_mdx_headless(
-                model_path=args.model,
-                audio_file=args.input,
-                export_path=args.output,
-                audio_file_base=args.name,
-                use_gpu=current_use_gpu,
-                device_set=args.device,
-                is_use_directml=args.directml if not gpu_fallback_attempted else False,
-                mdx_segment_size=args.segment_size,
-                overlap_mdx=args.overlap,
-                overlap_mdx23=args.overlap_mdxc,
-                mdx_batch_size=args.batch_size,
-                wav_type_set=args.wav_type,
-                model_json_path=args.json,
-                primary_only=args.primary_only,
-                secondary_only=args.secondary_only,
-                dry_only=args.dry_only,
-                no_dry_only=args.no_dry_only,
-                vocals_only=args.vocals_only,
-                instrumental_only=args.instrumental_only,
-                stem=args.stem,
-                verbose=not args.quiet
-            )
-            
-            return 0
-            
-        except Exception as e:
-            error_info = classify_error(e)
-            
-            # Check if GPU error and can fall back to CPU
-            if (error_info["category"] == ErrorCategory.GPU 
-                and error_info["recoverable"] 
-                and not gpu_fallback_attempted
-                and current_use_gpu is not False):
+    # Use ProgressManager for beautiful CLI output
+    with ProgressManager(verbose=not args.quiet) as pm:
+        while True:
+            try:
+                run_mdx_headless(
+                    model_path=args.model,
+                    audio_file=args.input,
+                    export_path=args.output,
+                    audio_file_base=args.name,
+                    use_gpu=current_use_gpu,
+                    device_set=args.device,
+                    is_use_directml=args.directml if not gpu_fallback_attempted else False,
+                    mdx_segment_size=args.segment_size,
+                    overlap_mdx=args.overlap,
+                    overlap_mdx23=args.overlap_mdxc,
+                    mdx_batch_size=args.batch_size,
+                    wav_type_set=args.wav_type,
+                    model_json_path=args.json,
+                    primary_only=args.primary_only,
+                    secondary_only=args.secondary_only,
+                    dry_only=args.dry_only,
+                    no_dry_only=args.no_dry_only,
+                    vocals_only=args.vocals_only,
+                    instrumental_only=args.instrumental_only,
+                    stem=args.stem,
+                    verbose=not args.quiet,
+                    progress_manager=pm
+                )
                 
-                print(format_error_message(error_info, verbose=not args.quiet), file=sys.stderr)
-                print("Attempting to fall back to CPU mode...\n", file=sys.stderr)
+                return 0
                 
-                gpu_fallback_attempted = True
-                current_use_gpu = False
+            except Exception as e:
+                error_info = classify_error(e)
                 
-                # Clear GPU memory if possible
-                try:
-                    import torch
-                    if torch.cuda.is_available():
-                        torch.cuda.empty_cache()
-                except:
-                    pass
+                # Check if GPU error and can fall back to CPU
+                if (error_info["category"] == ErrorCategory.GPU 
+                    and error_info["recoverable"] 
+                    and not gpu_fallback_attempted
+                    and current_use_gpu is not False):
+                    
+                    pm.write_message(format_error_message(error_info, verbose=not args.quiet), "yellow")
+                    pm.write_message("Attempting to fall back to CPU mode...\n", "yellow")
+                    
+                    gpu_fallback_attempted = True
+                    current_use_gpu = False
+                    
+                    # Clear GPU memory if possible
+                    try:
+                        import torch
+                        if torch.cuda.is_available():
+                            torch.cuda.empty_cache()
+                    except:
+                        pass
+                    
+                    continue  # Retry with CPU
                 
-                continue  # Retry with CPU
-            
-            # Non-recoverable error or already tried fallback
-            print(format_error_message(error_info, verbose=not args.quiet), file=sys.stderr)
-            
-            if not args.quiet:
-                import traceback
-                traceback.print_exc()
-            
-            return 1
+                # Non-recoverable error or already tried fallback
+                pm.write_message(format_error_message(error_info, verbose=not args.quiet), "red")
+                
+                if not args.quiet:
+                    import traceback
+                    traceback.print_exc()
+                
+                return 1
 
 
 if __name__ == '__main__':

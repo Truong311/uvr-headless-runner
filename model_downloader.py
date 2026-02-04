@@ -42,6 +42,17 @@ import difflib
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union, Any, Callable
 
+# Try to import rich for beautiful progress bars
+try:
+    from rich.progress import (
+        Progress, SpinnerColumn, TextColumn, BarColumn,
+        DownloadColumn, TransferSpeedColumn, TimeRemainingColumn
+    )
+    from rich.console import Console
+    RICH_AVAILABLE = True
+except ImportError:
+    RICH_AVAILABLE = False
+
 
 # ============================================================================
 # Custom Exception Classes for Better Error Handling
@@ -863,7 +874,7 @@ class ModelDownloader:
                                 speed_info = ""
                                 print(f"\r    Progress: {percent}% ({format_bytes(downloaded)}/{format_bytes(total_size)}){speed_info}", end='', flush=True)
                     
-                    if self.verbose and total_size > 0:
+                    if self.verbose and total_size > 0 and not progress_callback:
                         print()  # New line after progress
                     
                     # Verify downloaded size

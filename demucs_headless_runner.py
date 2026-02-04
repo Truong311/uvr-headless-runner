@@ -22,10 +22,17 @@ Demucs Headless Runner
 
 import os
 import sys
+import time
 import argparse
 import torch
 from pathlib import Path
 from types import SimpleNamespace
+
+# Import progress system
+from progress import (
+    ProgressManager, ProgressStage,
+    create_progress_callbacks, create_download_progress_callback
+)
 
 # 添加项目根目录到路径
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -127,7 +134,7 @@ def download_model(model_name: str) -> tuple:
     return downloader.download_model(model_name, 'demucs')
 
 
-def resolve_model_path(model_identifier: str, model_dir: str = None, verbose: bool = True) -> str:
+def resolve_model_path(model_identifier: str, model_dir: str = None, verbose: bool = True, progress_callback=None) -> str:
     """
     Resolve a model identifier to a local file path.
     
@@ -138,6 +145,7 @@ def resolve_model_path(model_identifier: str, model_dir: str = None, verbose: bo
         model_identifier: File path or model name
         model_dir: Optional model directory override
         verbose: Whether to print progress
+        progress_callback: Optional download progress callback (current, total, filename)
         
     Returns:
         Local file path to the model
@@ -155,7 +163,7 @@ def resolve_model_path(model_identifier: str, model_dir: str = None, verbose: bo
     if verbose:
         print(f"Looking up model in registry: {model_identifier}")
     
-    success, result = downloader.ensure_model(model_identifier, 'demucs')
+    success, result = downloader.ensure_model(model_identifier, 'demucs', progress_callback=progress_callback)
     
     if success:
         if verbose:
@@ -381,21 +389,49 @@ def create_demucs_model_data(model_path, **kwargs):
     return model_data
 
 
-def create_process_data(audio_file, export_path, audio_file_base=None, **kwargs):
-    """创建 process_data 字典"""
+def create_process_data(audio_file, export_path, audio_file_base=None, 
+                        progress_manager: ProgressManager = None, **kwargs):
+    """
+    创建 process_data 字典
+    
+    Args:
+        audio_file: 输入音频文件路径
+        export_path: 输出目录路径
+        audio_file_base: 输出文件基名
+        progress_manager: 进度管理器实例（可选）
+        **kwargs: 其他参数
+    """
     if audio_file_base is None:
         audio_file_base = os.path.splitext(os.path.basename(audio_file))[0]
     
-    def noop_progress(step=0, inference_iterations=0):
-        pass
+    verbose = kwargs.get('verbose', False)
+    
+    # 如果提供了 progress_manager，使用它创建回调
+    if progress_manager is not None:
+        callbacks = create_progress_callbacks(progress_manager, total_iterations=100)
+        set_progress_bar = callbacks['set_progress_bar']
+        write_to_console = callbacks['write_to_console']
+        process_iteration = callbacks['process_iteration']
+    else:
+        def set_progress_bar(step=0, inference_iterations=0):
+            pass
+        
+        def write_to_console(text, base_text=''):
+            if verbose:
+                msg = f"{base_text}{text}".strip()
+                if msg:
+                    print(msg)
+        
+        def process_iteration():
+            pass
     
     return {
         'audio_file': audio_file,
         'export_path': export_path,
         'audio_file_base': audio_file_base,
-        'set_progress_bar': noop_progress,
-        'write_to_console': lambda text, base_text='': print(text.strip()),
-        'process_iteration': lambda: None,
+        'set_progress_bar': set_progress_bar,
+        'write_to_console': write_to_console,
+        'process_iteration': process_iteration,
         'cached_source_callback': lambda *args, **kw: (None, None),
         'cached_model_source_holder': lambda *args, **kw: None,
         'list_all_models': [],
@@ -421,7 +457,8 @@ def run_demucs_headless(
     demucs_stems=ALL_STEMS,  # ALL_STEMS 或单个 stem 名称 (Vocals/Other/Bass/Drums/Guitar/Piano)
     primary_only=False,
     secondary_only=False,
-    verbose=True
+    verbose=True,
+    progress_manager: ProgressManager = None
 ):
     """
     运行 Demucs 分离的主函数（严格按照 GUI 行为）
@@ -441,11 +478,16 @@ def run_demucs_headless(
         primary_only: 只输出 primary stem
         secondary_only: 只输出 secondary stem
         verbose: 是否显示详细输出
+        progress_manager: 进度管理器实例（可选）
     
     Returns:
         输出文件路径字典
     """
-    import glob
+    start_time = time.time()
+    
+    # 如果没有提供 progress_manager，创建一个默认的
+    pm = progress_manager or ProgressManager(verbose=verbose)
+    pm.set_file_name(os.path.basename(audio_file))
     
     # 确保输出目录存在
     os.makedirs(export_path, exist_ok=True)
@@ -454,7 +496,6 @@ def run_demucs_headless(
     if audio_file_base is None:
         audio_file_base = os.path.splitext(os.path.basename(audio_file))[0]
     
-    # 创建 model_data
     # 转换 wav_type 名称为 soundfile 格式
     wav_type_map = {
         'PCM_U8': 'PCM_U8',
@@ -467,6 +508,10 @@ def run_demucs_headless(
         '64-bit Float': 'DOUBLE'
     }
     wav_type = wav_type_map.get(wav_type_set, 'PCM_24')
+    
+    # 创建 model_data
+    pm.start_stage(ProgressStage.LOADING_MODEL, "Loading Demucs model configuration")
+    pm.set_model_name(os.path.basename(model_path))
     
     model_data = create_demucs_model_data(
         model_path,
@@ -481,41 +526,56 @@ def run_demucs_headless(
         demucs_stems=demucs_stems,
         primary_only=primary_only,
         secondary_only=secondary_only,
-        verbose=verbose
+        verbose=False
     )
+    pm.finish_stage("Model configuration loaded")
     
     # 创建 process_data
-    process_data = create_process_data(audio_file, export_path, audio_file_base, verbose=verbose)
+    process_data = create_process_data(
+        audio_file, export_path, audio_file_base,
+        progress_manager=pm, verbose=verbose
+    )
     
-    if verbose:
-        print("=" * 50)
-        print("Demucs Headless Runner")
-        print("=" * 50)
-        print(f"模型: {model_path}")
-        print(f"输入: {audio_file}")
-        print(f"输出目录: {export_path}")
-        print(f"设备: {'GPU' if model_data.is_gpu_conversion >= 0 else 'CPU'}")
-        print(f"Device Set: {model_data.device_set}")
-        # 显示实际的 PyTorch 设备
-        import torch
-        if torch.cuda.is_available():
-            print(f"CUDA 设备数量: {torch.cuda.device_count()}")
-            for i in range(torch.cuda.device_count()):
-                print(f"  GPU {i}: {torch.cuda.get_device_name(i)}")
-            print(f"当前默认 CUDA 设备: {torch.cuda.current_device()}")
-        print(f"Demucs 版本: {model_data.demucs_version}")
-        print(f"Stems: {model_data.demucs_stem_count}")
-        print(f"Shifts: {shifts}")
-        print(f"输出格式: {model_data.wav_type_set}")
-        print("=" * 50)
+    # 打印 header 信息
+    device_str = 'CPU'
+    if model_data.is_gpu_conversion >= 0:
+        if is_use_directml:
+            device_str = f"DirectML:{device_set}"
+        elif cuda_available:
+            device_str = f"CUDA:{device_set}"
+    
+    pm.print_header(
+        model_name=os.path.basename(model_path),
+        input_file=audio_file,
+        output_path=export_path,
+        device=device_str,
+        arch_type=f"Demucs ({model_data.demucs_version})"
+    )
     
     # 运行分离（严格按照 GUI 行为，由 separate.py 控制输出）
+    pm.start_stage(ProgressStage.INFERENCE, "Running Demucs separation", total=100)
+    
     separator = SeperateDemucs(model_data, process_data)
     separator.seperate()
     
+    pm.finish_stage("Audio separation complete")
+    
+    # 记录输出文件
+    if demucs_stems == ALL_STEMS:
+        for stem_name in model_data.demucs_source_map.keys():
+            output_file = os.path.join(export_path, f"{audio_file_base}_({stem_name}).wav")
+            if os.path.isfile(output_file):
+                pm.add_output_file(output_file)
+    else:
+        for stem_name in [model_data.primary_stem, model_data.secondary_stem]:
+            if stem_name:
+                output_file = os.path.join(export_path, f"{audio_file_base}_({stem_name}).wav")
+                if os.path.isfile(output_file):
+                    pm.add_output_file(output_file)
+    
+    elapsed = time.time() - start_time
     if verbose:
-        print(f"\n处理完成!")
-        print(f"输出目录: {export_path}")
+        pm.write_message(f"\n✓ Total processing time: {elapsed:.1f}s", "green")
 
 
 def main():
@@ -678,16 +738,6 @@ def main():
         print(f"Error: {msg}", file=sys.stderr)
         return 1
     
-    # 查找模型路径（支持自动下载）
-    try:
-        model_path = resolve_model_path(args.model, args.model_dir, verbose=not args.quiet)
-    except FileNotFoundError as e:
-        print(f"错误: {e}", file=sys.stderr)
-        print(f"搜索的目录:", file=sys.stderr)
-        print(f"  - {DEFAULT_DEMUCS_V3_V4_DIR}", file=sys.stderr)
-        print(f"  - {DEFAULT_DEMUCS_DIR}", file=sys.stderr)
-        return 1
-    
     # 确定 GPU 使用
     if args.cpu:
         use_gpu = False
@@ -705,61 +755,79 @@ def main():
     gpu_fallback_attempted = False
     current_use_gpu = use_gpu
     
-    while True:
+    # Use ProgressManager for beautiful CLI output
+    with ProgressManager(verbose=not args.quiet) as pm:
+        # 查找模型路径（支持自动下载，包含进度显示）
         try:
-            run_demucs_headless(
-                model_path=model_path,
-                audio_file=args.input,
-                export_path=args.output,
-                audio_file_base=args.name,
-                use_gpu=current_use_gpu,
-                device_set=args.device,
-                is_use_directml=args.directml if not gpu_fallback_attempted else False,
-                shifts=args.shifts,
-                overlap=args.overlap,
-                segment=args.segment,
-                wav_type_set=args.wav_type,
-                demucs_stems=demucs_stems,
-                primary_only=args.primary_only,
-                secondary_only=args.secondary_only,
-                verbose=not args.quiet
+            from progress import create_download_progress_callback
+            download_callback = create_download_progress_callback(pm)
+            model_path = resolve_model_path(
+                args.model, args.model_dir, 
+                verbose=not args.quiet,
+                progress_callback=download_callback
             )
-            
-            return 0
-            
-        except Exception as e:
-            error_info = classify_error(e)
-            
-            # Check if GPU error and can fall back to CPU
-            if (error_info["category"] == ErrorCategory.GPU 
-                and error_info["recoverable"] 
-                and not gpu_fallback_attempted
-                and current_use_gpu is not False):
-                
-                print(format_error_message(error_info, verbose=not args.quiet), file=sys.stderr)
-                print("Attempting to fall back to CPU mode...\n", file=sys.stderr)
-                
-                gpu_fallback_attempted = True
-                current_use_gpu = False
-                
-                # Clear GPU memory if possible
-                try:
-                    import torch
-                    if torch.cuda.is_available():
-                        torch.cuda.empty_cache()
-                except:
-                    pass
-                
-                continue  # Retry with CPU
-            
-            # Non-recoverable error or already tried fallback
-            print(format_error_message(error_info, verbose=not args.quiet), file=sys.stderr)
-            
-            if not args.quiet:
-                import traceback
-                traceback.print_exc()
-            
+        except FileNotFoundError as e:
+            pm.write_message(f"错误: {e}", "red")
+            pm.write_message(f"搜索的目录:", "yellow")
+            pm.write_message(f"  - {DEFAULT_DEMUCS_V3_V4_DIR}")
+            pm.write_message(f"  - {DEFAULT_DEMUCS_DIR}")
             return 1
+        while True:
+            try:
+                run_demucs_headless(
+                    model_path=model_path,
+                    audio_file=args.input,
+                    export_path=args.output,
+                    audio_file_base=args.name,
+                    use_gpu=current_use_gpu,
+                    device_set=args.device,
+                    is_use_directml=args.directml if not gpu_fallback_attempted else False,
+                    shifts=args.shifts,
+                    overlap=args.overlap,
+                    segment=args.segment,
+                    wav_type_set=args.wav_type,
+                    demucs_stems=demucs_stems,
+                    primary_only=args.primary_only,
+                    secondary_only=args.secondary_only,
+                    verbose=not args.quiet,
+                    progress_manager=pm
+                )
+                
+                return 0
+                
+            except Exception as e:
+                error_info = classify_error(e)
+                
+                # Check if GPU error and can fall back to CPU
+                if (error_info["category"] == ErrorCategory.GPU 
+                    and error_info["recoverable"] 
+                    and not gpu_fallback_attempted
+                    and current_use_gpu is not False):
+                    
+                    pm.write_message(format_error_message(error_info, verbose=not args.quiet), "yellow")
+                    pm.write_message("Attempting to fall back to CPU mode...\n", "yellow")
+                    
+                    gpu_fallback_attempted = True
+                    current_use_gpu = False
+                    
+                    # Clear GPU memory if possible
+                    try:
+                        import torch
+                        if torch.cuda.is_available():
+                            torch.cuda.empty_cache()
+                    except:
+                        pass
+                    
+                    continue  # Retry with CPU
+                
+                # Non-recoverable error or already tried fallback
+                pm.write_message(format_error_message(error_info, verbose=not args.quiet), "red")
+                
+                if not args.quiet:
+                    import traceback
+                    traceback.print_exc()
+                
+                return 1
 
 
 if __name__ == '__main__':

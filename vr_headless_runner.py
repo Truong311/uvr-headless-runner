@@ -27,10 +27,17 @@ import sys
 import json
 import math
 import hashlib
+import time
 import torch
 import argparse
 from pathlib import Path
 from types import SimpleNamespace
+
+# Import progress system
+from progress import (
+    ProgressManager, ProgressStage,
+    create_progress_callbacks, create_download_progress_callback
+)
 
 # 添加项目根目录到路径
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -144,7 +151,7 @@ def download_model(model_name: str, verbose: bool = True) -> tuple:
     return downloader.download_model(model_name, 'vr')
 
 
-def resolve_model_path(model_identifier: str, verbose: bool = True) -> str:
+def resolve_model_path(model_identifier: str, verbose: bool = True, progress_callback=None) -> str:
     """
     解析模型标识符并返回本地模型路径
     
@@ -154,6 +161,7 @@ def resolve_model_path(model_identifier: str, verbose: bool = True) -> str:
     Args:
         model_identifier: 模型路径或模型名称
         verbose: 是否显示详细信息
+        progress_callback: 可选的下载进度回调函数 (current, total, filename)
         
     Returns:
         模型文件的本地路径
@@ -202,7 +210,7 @@ def resolve_model_path(model_identifier: str, verbose: bool = True) -> str:
             if verbose:
                 print(f"模型 '{model_name}' 未安装，正在下载...")
             
-            success, result = downloader.ensure_model(model_name, 'vr')
+            success, result = downloader.ensure_model(model_name, 'vr', progress_callback=progress_callback)
             if success:
                 if verbose:
                     print(f"下载完成: {result}")
@@ -585,26 +593,43 @@ def create_vr_model_data_with_user_params(model_path, vr_hash_MAPPER, user_param
     return model_data
 
 
-def create_process_data(audio_file, export_path, audio_file_base=None):
+def create_process_data(audio_file, export_path, audio_file_base=None, 
+                        progress_manager: ProgressManager = None, **kwargs):
     """
     创建 process_data 字典
     
     与 UVR 的 process_data 结构完全一致
+    
+    Args:
+        audio_file: 输入音频文件路径
+        export_path: 输出目录路径
+        audio_file_base: 输出文件基名
+        progress_manager: 进度管理器实例（可选）
+        **kwargs: 其他参数
     """
     if audio_file_base is None:
         audio_file_base = os.path.splitext(os.path.basename(audio_file))[0]
     
-    def noop_progress(step=0, inference_iterations=0):
-        pass
+    verbose = kwargs.get('verbose', True)
     
-    def write_console(progress_text='', base_text=''):
-        # UVR GUI 会写入控制台，headless 也打印
-        msg = f"{base_text}{progress_text}".strip()
-        if msg:
-            print(msg)
-    
-    def noop_iteration():
-        pass
+    # 如果提供了 progress_manager，使用它创建回调
+    if progress_manager is not None:
+        callbacks = create_progress_callbacks(progress_manager, total_iterations=100)
+        set_progress_bar = callbacks['set_progress_bar']
+        write_to_console = callbacks['write_to_console']
+        process_iteration = callbacks['process_iteration']
+    else:
+        def set_progress_bar(step=0, inference_iterations=0):
+            pass
+        
+        def write_to_console(progress_text='', base_text=''):
+            if verbose:
+                msg = f"{base_text}{progress_text}".strip()
+                if msg:
+                    print(msg)
+        
+        def process_iteration():
+            pass
     
     def noop_cache_callback(process_method, model_name=None):
         return (None, None)
@@ -617,9 +642,9 @@ def create_process_data(audio_file, export_path, audio_file_base=None):
         'export_path': export_path,
         'audio_file_base': audio_file_base,
         'audio_file': audio_file,
-        'set_progress_bar': noop_progress,
-        'write_to_console': write_console,
-        'process_iteration': noop_iteration,
+        'set_progress_bar': set_progress_bar,
+        'write_to_console': write_to_console,
+        'process_iteration': process_iteration,
         'cached_source_callback': noop_cache_callback,
         'cached_model_source_holder': noop_cache_holder,
         'list_all_models': [],
@@ -650,13 +675,29 @@ def run_vr_headless(
     user_nout_lstm=None,
     is_primary_stem_only=False,
     is_secondary_stem_only=False,
+    verbose=True,
+    progress_manager: ProgressManager = None,
     **kwargs
 ):
     """
     Headless VR Architecture 运行器主函数
     
     直接使用 UVR 原有的 SeperateVR 类，行为与 GUI 完全一致
+    
+    Args:
+        model_path: 模型文件路径
+        audio_file: 输入音频文件路径
+        export_path: 输出目录路径
+        progress_manager: 进度管理器实例（可选）
+        ...
     """
+    start_time = time.time()
+    
+    # 如果没有提供 progress_manager，创建一个默认的
+    pm = progress_manager or ProgressManager(verbose=verbose)
+    pm.set_file_name(os.path.basename(audio_file))
+    pm.set_model_name(os.path.basename(model_path))
+    
     # 验证输入文件
     if not os.path.isfile(audio_file):
         raise FileNotFoundError(f"Audio file not found: {audio_file}")
@@ -664,10 +705,12 @@ def run_vr_headless(
         os.makedirs(export_path, exist_ok=True)
     
     # 加载哈希映射（与 UVR.py line 1712 一致）
+    pm.start_stage(ProgressStage.INITIALIZING, "Loading model database")
     if os.path.isfile(VR_HASH_JSON):
         vr_hash_MAPPER = load_model_hash_data(VR_HASH_JSON)
     else:
         vr_hash_MAPPER = {}
+    pm.finish_stage("Model database loaded")
     
     # 转换 wav_type 名称为 soundfile 格式
     wav_type_map = {
@@ -691,6 +734,7 @@ def run_vr_headless(
     } if user_vr_model_param or user_primary_stem else None
     
     # 创建 ModelData（严格按照 UVR 流程）
+    pm.start_stage(ProgressStage.LOADING_MODEL, "Loading VR model configuration")
     model_data = create_vr_model_data_with_user_params(
         model_path,
         vr_hash_MAPPER,
@@ -710,19 +754,18 @@ def run_vr_headless(
         is_secondary_stem_only=is_secondary_stem_only,
         **kwargs
     )
+    pm.finish_stage("Model configuration loaded")
     
     # 检查 model_status（与 UVR 行为一致）
     if not model_data.model_status:
-        # UVR GUI 在这种情况下不会运行分离，只是静默返回
-        # 但 headless 需要通知用户
-        print(f"Error: Model status is False for {model_path}")
-        print(f"Model hash: {model_data.model_hash}")
+        pm.write_message(f"Error: Model status is False for {model_path}", "red")
+        pm.write_message(f"Model hash: {model_data.model_hash}", "yellow")
         if not hasattr(model_data, 'vr_model_param') or model_data.vr_model_param is None:
-            print(f"Model hash not found in database. Please provide --param and --primary-stem arguments.")
-            print(f"Example: --param 4band_v3 --primary-stem Vocals")
+            pm.write_message("Model hash not found in database. Please provide --param and --primary-stem arguments.", "yellow")
+            pm.write_message("Example: --param 4band_v3 --primary-stem Vocals", "cyan")
             if os.path.isdir(VR_PARAM_DIR):
                 params = [os.path.splitext(f)[0] for f in os.listdir(VR_PARAM_DIR) if f.endswith('.json')]
-                print(f"Available params: {', '.join(sorted(params))}")
+                pm.write_message(f"Available params: {', '.join(sorted(params))}")
         return False
     
     # 创建 process_data
@@ -732,38 +775,46 @@ def run_vr_headless(
     process_data = create_process_data(
         audio_file,
         export_path,
-        audio_file_base
+        audio_file_base,
+        progress_manager=pm,
+        verbose=verbose
     )
     process_data['model_data'] = model_data
     
-    # 打印信息
-    print("=" * 60)
-    print("VR Architecture Headless Runner")
-    print("=" * 60)
-    print(f"Model: {model_data.model_path}")
-    print(f"Input: {audio_file}")
-    print(f"Output: {export_path}")
-    print(f"Device: {'GPU' if model_data.is_gpu_conversion >= 0 else 'CPU'}")
-    print(f"VR 5.1 Model: {model_data.is_vr_51_model}")
-    print(f"Model Capacity: {model_data.model_capacity}")
-    print(f"Sample Rate: {model_data.model_samplerate}")
-    print(f"Primary Stem: {model_data.primary_stem}")
-    print(f"Secondary Stem: {model_data.secondary_stem}")
-    print(f"Window Size: {model_data.window_size}")
-    print(f"Aggression: {model_data.aggression_setting * 100:.0f}%")
-    print(f"TTA: {model_data.is_tta}")
-    print(f"Post Process: {model_data.is_post_process}")
-    print(f"High End Process: {model_data.is_high_end_process}")
-    print(f"Output Format: {model_data.wav_type_set}")
-    print("=" * 60)
+    # 打印 header 信息
+    device_str = 'CPU'
+    if model_data.is_gpu_conversion >= 0:
+        if is_use_directml:
+            device_str = f"DirectML:{device_set}"
+        elif cuda_available:
+            device_str = f"CUDA:{device_set}"
+    
+    pm.print_header(
+        model_name=os.path.basename(model_path),
+        input_file=audio_file,
+        output_path=export_path,
+        device=device_str,
+        arch_type=f"VR Architecture {'(5.1)' if model_data.is_vr_51_model else ''}"
+    )
     
     # 运行分离 - 使用 UVR 原有的类
+    pm.start_stage(ProgressStage.INFERENCE, "Running VR separation", total=100)
+    
     separator = SeperateVR(model_data, process_data)
-    print(f"Actual device: {separator.device}")
     separator.seperate()
     
-    print(f"\nProcessing complete!")
-    print(f"Output: {export_path}")
+    pm.finish_stage("Audio separation complete")
+    
+    # 记录输出文件
+    for stem_name in [model_data.primary_stem, model_data.secondary_stem]:
+        if stem_name:
+            output_file = os.path.join(export_path, f"{audio_file_base}_({stem_name}).wav")
+            if os.path.isfile(output_file):
+                pm.add_output_file(output_file)
+    
+    elapsed = time.time() - start_time
+    if verbose:
+        pm.write_message(f"\n✓ Total processing time: {elapsed:.1f}s", "green")
     
     return True
 
@@ -966,13 +1017,6 @@ Available model params:
         print(f"Error: {msg}", file=sys.stderr)
         return 1
     
-    # 解析模型路径（支持自动下载）
-    try:
-        model_path = resolve_model_path(args.model, verbose=not args.quiet)
-    except FileNotFoundError as e:
-        print(f"错误: {e}", file=sys.stderr)
-        return 1
-    
     # GPU 设置
     use_gpu = None
     if args.cpu:
@@ -984,66 +1028,83 @@ Available model params:
     gpu_fallback_attempted = False
     current_use_gpu = use_gpu
     
-    while True:
+    # Use ProgressManager for beautiful CLI output
+    with ProgressManager(verbose=not args.quiet) as pm:
+        # 解析模型路径（支持自动下载，包含进度显示）
         try:
-            success = run_vr_headless(
-                model_path=model_path,
-                audio_file=args.input,
-                export_path=args.output,
-                audio_file_base=args.name,
-                use_gpu=current_use_gpu,
-                device_set=args.device,
-                is_use_directml=args.directml if not gpu_fallback_attempted else False,
-                window_size=args.window_size,
-                aggression_setting=args.aggression,
-                batch_size=args.batch_size,
-                is_tta=args.tta,
-                is_post_process=args.post_process,
-                post_process_threshold=args.post_process_threshold,
-                is_high_end_process=args.high_end_process,
-                wav_type_set=args.wav_type,
-                user_vr_model_param=args.param,
-                user_primary_stem=args.primary_stem,
-                user_nout=args.nout,
-                user_nout_lstm=args.nout_lstm,
-                is_primary_stem_only=args.primary_only,
-                is_secondary_stem_only=args.secondary_only
+            # Create a download progress callback from progress manager
+            from progress import create_download_progress_callback
+            download_callback = create_download_progress_callback(pm)
+            model_path = resolve_model_path(
+                args.model, 
+                verbose=not args.quiet,
+                progress_callback=download_callback
             )
-            
-            return 0 if success else 1
-            
-        except Exception as e:
-            error_info = classify_error(e)
-            
-            # Check if GPU error and can fall back to CPU
-            if (error_info["category"] == ErrorCategory.GPU 
-                and error_info["recoverable"] 
-                and not gpu_fallback_attempted
-                and current_use_gpu is not False):
-                
-                print(format_error_message(error_info, verbose=not args.quiet), file=sys.stderr)
-                print("Attempting to fall back to CPU mode...\n", file=sys.stderr)
-                
-                gpu_fallback_attempted = True
-                current_use_gpu = False
-                
-                # Clear GPU memory if possible
-                try:
-                    if torch.cuda.is_available():
-                        torch.cuda.empty_cache()
-                except:
-                    pass
-                
-                continue  # Retry with CPU
-            
-            # Non-recoverable error or already tried fallback
-            print(format_error_message(error_info, verbose=not args.quiet), file=sys.stderr)
-            
-            if not args.quiet:
-                import traceback
-                traceback.print_exc()
-            
+        except FileNotFoundError as e:
+            pm.write_message(f"错误: {e}", "red")
             return 1
+        while True:
+            try:
+                success = run_vr_headless(
+                    model_path=model_path,
+                    audio_file=args.input,
+                    export_path=args.output,
+                    audio_file_base=args.name,
+                    use_gpu=current_use_gpu,
+                    device_set=args.device,
+                    is_use_directml=args.directml if not gpu_fallback_attempted else False,
+                    window_size=args.window_size,
+                    aggression_setting=args.aggression,
+                    batch_size=args.batch_size,
+                    is_tta=args.tta,
+                    is_post_process=args.post_process,
+                    post_process_threshold=args.post_process_threshold,
+                    is_high_end_process=args.high_end_process,
+                    wav_type_set=args.wav_type,
+                    user_vr_model_param=args.param,
+                    user_primary_stem=args.primary_stem,
+                    user_nout=args.nout,
+                    user_nout_lstm=args.nout_lstm,
+                    is_primary_stem_only=args.primary_only,
+                    is_secondary_stem_only=args.secondary_only,
+                    verbose=not args.quiet,
+                    progress_manager=pm
+                )
+                
+                return 0 if success else 1
+                
+            except Exception as e:
+                error_info = classify_error(e)
+                
+                # Check if GPU error and can fall back to CPU
+                if (error_info["category"] == ErrorCategory.GPU 
+                    and error_info["recoverable"] 
+                    and not gpu_fallback_attempted
+                    and current_use_gpu is not False):
+                    
+                    pm.write_message(format_error_message(error_info, verbose=not args.quiet), "yellow")
+                    pm.write_message("Attempting to fall back to CPU mode...\n", "yellow")
+                    
+                    gpu_fallback_attempted = True
+                    current_use_gpu = False
+                    
+                    # Clear GPU memory if possible
+                    try:
+                        if torch.cuda.is_available():
+                            torch.cuda.empty_cache()
+                    except:
+                        pass
+                    
+                    continue  # Retry with CPU
+                
+                # Non-recoverable error or already tried fallback
+                pm.write_message(format_error_message(error_info, verbose=not args.quiet), "red")
+                
+                if not args.quiet:
+                    import traceback
+                    traceback.print_exc()
+                
+                return 1
 
 
 if __name__ == '__main__':
