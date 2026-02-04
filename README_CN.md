@@ -68,15 +68,19 @@
 
 ### 🚀 亮点
 
-| 特性 | 说明 |
-|------|------|
-| 🎯 **GUI 行为一致** | 完全复制 UVR GUI 的行为逻辑 |
-| ⚡ **GPU 加速** | 支持 NVIDIA CUDA 和 AMD DirectML |
-| 🔧 **零配置** | 自动检测模型参数 |
-| 📦 **批量处理** | 适合自动化和流水线 |
-| 🎚️ **位深控制** | 16/24/32-bit PCM，32/64-bit 浮点 |
-| 📥 **自动下载** | 官方 UVR 模型注册表 + 自动下载 |
-| 🛡️ **健壮错误处理** | GPU 回退、重试、模糊匹配 |
+<table>
+<tr>
+<th width="50%">特性</th>
+<th width="50%">说明</th>
+</tr>
+<tr><td>🎯 <b>GUI 行为一致</b></td><td>完全复制 UVR GUI 的行为逻辑</td></tr>
+<tr><td>⚡ <b>GPU 加速</b></td><td>支持 NVIDIA CUDA 和 AMD DirectML</td></tr>
+<tr><td>🔧 <b>零配置</b></td><td>自动检测模型参数</td></tr>
+<tr><td>📦 <b>批量处理</b></td><td>适合自动化和流水线</td></tr>
+<tr><td>🎚️ <b>位深控制</b></td><td>16/24/32-bit PCM，32/64-bit 浮点</td></tr>
+<tr><td>📥 <b>自动下载</b></td><td>官方 UVR 模型注册表 + 自动下载</td></tr>
+<tr><td>🛡️ <b>健壮错误处理</b></td><td>GPU 回退、重试、模糊匹配</td></tr>
+</table>
 
 ---
 

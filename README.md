@@ -68,15 +68,19 @@
 
 ### 🚀 Highlights
 
-| Feature | Description |
-|---------|-------------|
-| 🎯 **GUI-Identical** | Exactly replicates UVR GUI behavior |
-| ⚡ **GPU Accelerated** | NVIDIA CUDA & AMD DirectML support |
-| 🔧 **Zero Config** | Auto-detect model parameters |
-| 📦 **Batch Ready** | Perfect for automation & pipelines |
-| 🎚️ **Bit Depth Control** | 16/24/32-bit PCM, 32/64-bit float |
-| 📥 **Auto Download** | Official UVR model registry with auto-download |
-| 🛡️ **Robust Error Handling** | GPU fallback, retry, fuzzy matching |
+<table>
+<tr>
+<th width="50%">Feature</th>
+<th width="50%">Description</th>
+</tr>
+<tr><td>🎯 <b>GUI-Identical</b></td><td>Exactly replicates UVR GUI behavior</td></tr>
+<tr><td>⚡ <b>GPU Accelerated</b></td><td>NVIDIA CUDA & AMD DirectML support</td></tr>
+<tr><td>🔧 <b>Zero Config</b></td><td>Auto-detect model parameters</td></tr>
+<tr><td>📦 <b>Batch Ready</b></td><td>Perfect for automation & pipelines</td></tr>
+<tr><td>🎚️ <b>Bit Depth Control</b></td><td>16/24/32-bit PCM, 32/64-bit float</td></tr>
+<tr><td>📥 <b>Auto Download</b></td><td>Official UVR model registry with auto-download</td></tr>
+<tr><td>🛡️ <b>Robust Error Handling</b></td><td>GPU fallback, retry, fuzzy matching</td></tr>
+</table>
 
 ---
 
