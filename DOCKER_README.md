@@ -362,14 +362,6 @@ docker rmi uvr-headless:gpu uvr-headless:cpu
 rm -rf ~/.uvr_models
 ```
 
-## 📊 Performance Comparison
-
-| Mode | 3-minute Audio Processing Time | VRAM Usage |
-|------|--------------------------------|------------|
-| GPU (RTX 3080) | ~15s | ~4GB |
-| GPU (RTX 4090) | ~8s | ~4GB |
-| CPU (i7-12700) | ~3min | N/A |
-
 ## 🤝 Contributing
 
 Issues and Pull Requests are welcome!
