@@ -789,12 +789,23 @@ def run_vr_headless(
         elif cuda_available:
             device_str = f"CUDA:{device_set}"
     
+    # Build output stems string for header
+    output_stems = None
+    if model_data.primary_stem and model_data.secondary_stem:
+        if model_data.is_primary_stem_only:
+            output_stems = model_data.primary_stem
+        elif model_data.is_secondary_stem_only:
+            output_stems = model_data.secondary_stem
+        else:
+            output_stems = f"{model_data.primary_stem}, {model_data.secondary_stem}"
+    
     pm.print_header(
         model_name=os.path.basename(model_path),
         input_file=audio_file,
         output_path=export_path,
         device=device_str,
-        arch_type=f"VR Architecture {'(5.1)' if model_data.is_vr_51_model else ''}"
+        arch_type=f"VR Architecture {'(5.1)' if model_data.is_vr_51_model else ''}",
+        output_stems=output_stems
     )
     
     # 运行分离 - 使用 UVR 原有的类

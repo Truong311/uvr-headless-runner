@@ -544,12 +544,27 @@ def run_demucs_headless(
         elif cuda_available:
             device_str = f"CUDA:{device_set}"
     
+    # Build output stems string for header
+    output_stems = None
+    if demucs_stems == ALL_STEMS:
+        output_stems = "All Stems"
+    elif model_data.primary_stem:
+        if model_data.is_primary_stem_only:
+            output_stems = model_data.primary_stem
+        elif model_data.is_secondary_stem_only and model_data.secondary_stem:
+            output_stems = model_data.secondary_stem
+        elif model_data.secondary_stem:
+            output_stems = f"{model_data.primary_stem}, {model_data.secondary_stem}"
+        else:
+            output_stems = model_data.primary_stem
+    
     pm.print_header(
         model_name=os.path.basename(model_path),
         input_file=audio_file,
         output_path=export_path,
         device=device_str,
-        arch_type=f"Demucs ({model_data.demucs_version})"
+        arch_type=f"Demucs ({model_data.demucs_version})",
+        output_stems=output_stems
     )
     
     # 运行分离（严格按照 GUI 行为，由 separate.py 控制输出）

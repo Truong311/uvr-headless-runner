@@ -928,12 +928,23 @@ def run_mdx_headless(
     
     arch_type = 'MDX-C/Roformer' if model_data.is_mdx_c else 'MDX-Net'
     
+    # Build output stems string for header
+    output_stems = None
+    if model_data.primary_stem and model_data.secondary_stem:
+        if model_data.is_primary_stem_only:
+            output_stems = model_data.primary_stem
+        elif model_data.is_secondary_stem_only:
+            output_stems = model_data.secondary_stem
+        else:
+            output_stems = f"{model_data.primary_stem}, {model_data.secondary_stem}"
+    
     pm.print_header(
         model_name=os.path.basename(resolved_model_path),
         input_file=audio_file,
         output_path=export_path,
         device=device_str,
-        arch_type=arch_type
+        arch_type=arch_type,
+        output_stems=output_stems
     )
     
     # 运行分离 - 使用 UVR 原有的类

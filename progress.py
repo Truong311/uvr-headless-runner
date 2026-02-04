@@ -341,7 +341,7 @@ if RICH_AVAILABLE:
                 self.console.print(message)
         
         def print_header(self, model_name: str, input_file: str, output_path: str, 
-                        device: str, arch_type: str):
+                        device: str, arch_type: str, output_stems: str = None):
             """Print a formatted header for the processing job."""
             if not self.verbose:
                 return
@@ -354,6 +354,8 @@ if RICH_AVAILABLE:
             table.add_row("Model", model_name)
             table.add_row("Input", os.path.basename(input_file))
             table.add_row("Output", output_path)
+            if output_stems:
+                table.add_row("Stems", output_stems)
             table.add_row("Device", device)
             table.add_row("Architecture", arch_type)
             
@@ -445,7 +447,7 @@ if TQDM_AVAILABLE:
             tqdm.write(message)
         
         def print_header(self, model_name: str, input_file: str, output_path: str,
-                        device: str, arch_type: str):
+                        device: str, arch_type: str, output_stems: str = None):
             if not self.verbose:
                 return
             
@@ -455,6 +457,8 @@ if TQDM_AVAILABLE:
             print(f"Model:        {model_name}")
             print(f"Input:        {os.path.basename(input_file)}")
             print(f"Output:       {output_path}")
+            if output_stems:
+                print(f"Stems:        {output_stems}")
             print(f"Device:       {device}")
             print(f"Architecture: {arch_type}")
             print("=" * 60)
@@ -464,11 +468,11 @@ if TQDM_AVAILABLE:
                 return
             
             print()
-            print(f"✓ Processing completed in {format_time(elapsed_time)}")
+            print(f"[OK] Processing completed in {format_time(elapsed_time)}")
             if output_files:
                 print("\nOutput files:")
                 for f in output_files:
-                    print(f"  • {f}")
+                    print(f"  - {f}")
             print()
 
 
@@ -530,7 +534,7 @@ class BasicProgressHandler(BaseProgressHandler):
         sys.stdout.flush()
     
     def print_header(self, model_name: str, input_file: str, output_path: str,
-                    device: str, arch_type: str):
+                    device: str, arch_type: str, output_stems: str = None):
         if not self.verbose:
             return
         
@@ -540,6 +544,8 @@ class BasicProgressHandler(BaseProgressHandler):
         print(f"Model:        {model_name}")
         print(f"Input:        {os.path.basename(input_file)}")
         print(f"Output:       {output_path}")
+        if output_stems:
+            print(f"Stems:        {output_stems}")
         print(f"Device:       {device}")
         print(f"Architecture: {arch_type}")
         print("=" * 60)
@@ -549,7 +555,7 @@ class BasicProgressHandler(BaseProgressHandler):
             return
         
         print()
-        print(f"✓ Processing completed in {format_time(elapsed_time)}")
+        print(f"[OK] Processing completed in {format_time(elapsed_time)}")
         if output_files:
             print("\nOutput files:")
             for f in output_files:
@@ -621,9 +627,9 @@ class ProgressManager:
         self._output_files.append(path)
     
     def print_header(self, model_name: str, input_file: str, output_path: str,
-                    device: str, arch_type: str):
+                    device: str, arch_type: str, output_stems: str = None):
         """Print processing header information."""
-        self.handler.print_header(model_name, input_file, output_path, device, arch_type)
+        self.handler.print_header(model_name, input_file, output_path, device, arch_type, output_stems)
     
     def start_stage(self, stage: ProgressStage, description: str = "", total: int = 100):
         """Start a new processing stage."""
@@ -764,8 +770,10 @@ def create_progress_callbacks(progress_manager: ProgressManager, total_iteration
         """UVR-compatible console write callback."""
         message = f"{base_text}{progress_text}".strip()
         if message and progress_manager.verbose:
-            # Filter out common UVR noise messages
-            if message not in ['Done!', 'DONE', 'done!']:
+            # Filter out common UVR noise messages and redundant stem info
+            # (stem info is now shown in header)
+            noise_patterns = ['Done!', 'DONE', 'done!', 'Saving ', ' stem...']
+            if not any(p in message for p in noise_patterns):
                 progress_manager.write_message(message)
     
     def process_iteration():
@@ -940,7 +948,8 @@ def demo():
             input_file="test_song.mp3",
             output_path="./output",
             device="CUDA:0",
-            arch_type="MDX-Net"
+            arch_type="MDX-Net",
+            output_stems="Vocals, Instrumental"
         )
         
         # Simulate download

@@ -138,9 +138,8 @@ class SeperateAttributes:
         self.secondary_model = model_data.secondary_model #
         self.primary_model_primary_stem = model_data.primary_model_primary_stem
         self.primary_stem_native = model_data.primary_stem_native
-        self.primary_stem = model_data.primary_stem #
-        print(self.primary_stem)
-        self.secondary_stem = model_data.secondary_stem #
+        self.primary_stem = model_data.primary_stem
+        self.secondary_stem = model_data.secondary_stem
         self.is_invert_spec = model_data.is_invert_spec #
         self.is_deverb_vocals = model_data.is_deverb_vocals
         self.is_target_instrument = model_data.is_target_instrument
