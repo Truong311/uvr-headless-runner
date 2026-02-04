@@ -75,6 +75,8 @@
 | 🔧 **零配置** | 自动检测模型参数 |
 | 📦 **批量处理** | 适合自动化和流水线 |
 | 🎚️ **位深控制** | 16/24/32-bit PCM，32/64-bit 浮点 |
+| 📥 **自动下载** | 官方 UVR 模型注册表 + 自动下载 |
+| 🛡️ **健壮错误处理** | GPU 回退、重试、模糊匹配 |
 
 ---
 
@@ -235,6 +237,99 @@ python vr_headless_runner.py -m "model.pth" -i "song.flac" -o "output/" --gpu
 python vr_headless_runner.py -m "model.pth" -i "song.flac" -o "output/" --gpu \
     --param 4band_v3 --primary-stem Vocals
 ```
+
+---
+
+## 📥 模型下载中心
+
+所有运行器现在都支持从官方 UVR 源**自动下载模型** —— 就像 GUI 一样！
+
+### 列出可用模型
+
+```bash
+# 列出所有 MDX-Net 模型
+python mdx_headless_runner.py --list
+
+# 只列出已安装的模型
+python mdx_headless_runner.py --list-installed
+
+# 列出未下载的模型
+python mdx_headless_runner.py --list-uninstalled
+
+# Demucs 和 VR 也一样
+python demucs_headless_runner.py --list
+python vr_headless_runner.py --list
+```
+
+### 下载模型
+
+```bash
+# 下载指定模型（不运行推理）
+python mdx_headless_runner.py --download "UVR-MDX-NET Inst HQ 3"
+python demucs_headless_runner.py --download "htdemucs_ft"
+python vr_headless_runner.py --download "UVR-De-Echo-Normal by FoxJoy"
+```
+
+### 推理时自动下载
+
+```bash
+# 直接使用模型名 - 如果未安装会自动下载！
+python mdx_headless_runner.py -m "UVR-MDX-NET Inst HQ 3" -i "song.flac" -o "output/" --gpu
+
+# Demucs 模型也支持自动下载
+python demucs_headless_runner.py --model htdemucs_ft --input "song.flac" --output "output/" --gpu
+```
+
+### 模型信息 & 模糊匹配
+
+```bash
+# 获取模型详细信息
+python mdx_headless_runner.py --model-info "UVR-MDX-NET Inst HQ 3"
+
+# 拼写错误？给你建议！
+python mdx_headless_runner.py --model-info "UVR-MDX Inst HQ"
+# 输出: Did you mean: UVR-MDX-NET Inst HQ 1, UVR-MDX-NET Inst HQ 2, ...
+```
+
+### 功能特性
+
+| 功能 | 说明 |
+|------|------|
+| 🌐 **官方注册表** | 同步 UVR 官方模型列表 |
+| 🔄 **断点续传** | 中断的下载可以恢复 |
+| ⏱️ **指数退避重试** | 网络错误自动重试 |
+| 💾 **磁盘空间检查** | 下载前预检可用空间 |
+| 🔍 **模糊匹配** | 拼写错误时建议相似模型名 |
+| ✅ **完整性检查** | 验证下载文件 |
+
+---
+
+## 🛡️ 错误处理 & GPU 回退
+
+所有运行器都包含**健壮的错误处理**，支持自动 GPU 转 CPU 回退：
+
+```bash
+# 如果 GPU 显存不足，自动回退到 CPU
+python mdx_headless_runner.py -m "model.ckpt" -i "song.flac" -o "output/" --gpu
+
+# GPU 错误时的输出:
+# ============================================================
+# ERROR: GPU memory exhausted
+# ============================================================
+# Suggestion: Try: (1) Use --cpu flag, (2) Reduce --batch-size...
+#
+# Attempting to fall back to CPU mode...
+```
+
+### 错误消息
+
+错误现在包含清晰的解释和建议：
+
+| 之前 | 之后 |
+|------|------|
+| `FileNotFoundError` | `Audio file not found: song.wav` |
+| `CUDA out of memory` | `GPU memory exhausted. Try: --cpu or reduce --batch-size` |
+| `Model not found` | `Model 'xyz' not found. Did you mean: UVR-MDX-NET...?` |
 
 ---
 
@@ -502,10 +597,42 @@ pip install torch torchvision torchaudio --index-url https://download.pytorch.or
 <details>
 <summary><b>❌ 找不到模型</b></summary>
 
+**方式一：使用自动下载（推荐）**
+```bash
+# 列出可用模型
+python mdx_headless_runner.py --list
+
+# 下载模型
+python mdx_headless_runner.py --download "UVR-MDX-NET Inst HQ 3"
+
+# 或者直接使用 - 自动下载！
+python mdx_headless_runner.py -m "UVR-MDX-NET Inst HQ 3" -i song.wav -o output/
+```
+
+**方式二：手动下载**
+
 默认位置：
-- **MDX**: `C:\Users\{user}\AppData\Local\Programs\Ultimate Vocal Remover\models\MDX_Net_Models\`
-- **Demucs**: 自动下载到 `~/.cache/torch/hub/`
-- **VR**: `C:\Users\{user}\AppData\Local\Programs\Ultimate Vocal Remover\models\VR_Models\`
+- **MDX**: `./models/MDX_Net_Models/`
+- **Demucs**: `./models/Demucs_Models/v3_v4_repo/`
+- **VR**: `./models/VR_Models/`
+
+</details>
+
+<details>
+<summary><b>❌ 网络/下载错误</b></summary>
+
+```bash
+# 强制刷新模型注册表
+python model_downloader.py --sync
+
+# 检查网络连接
+python -c "import urllib.request; urllib.request.urlopen('https://github.com')"
+```
+
+下载器包含：
+- 自动重试（3 次，指数退避）
+- 断点续传
+- 注册表缓存回退
 
 </details>
 

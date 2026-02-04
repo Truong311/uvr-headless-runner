@@ -10,8 +10,14 @@ Demucs Headless Runner
     # 使用 6-stem 模型
     python demucs_headless_runner.py --model htdemucs_6s --input input.wav --output output/
     
-    # 指定模型目录
-    python demucs_headless_runner.py --model htdemucs --model-dir /path/to/v3_v4_repo --input input.wav --output output/
+    # 使用模型名称（自动下载）
+    python demucs_headless_runner.py -m "htdemucs_ft" -i input.wav -o output/ --gpu
+    
+    # 列出可用模型
+    python demucs_headless_runner.py --list
+    
+    # 仅下载模型
+    python demucs_headless_runner.py --download "htdemucs_ft"
 """
 
 import os
@@ -50,6 +56,123 @@ cpu = torch.device('cpu')
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_DEMUCS_DIR = os.path.join(SCRIPT_DIR, 'models', 'Demucs_Models')
 DEFAULT_DEMUCS_V3_V4_DIR = os.path.join(DEFAULT_DEMUCS_DIR, 'v3_v4_repo')
+
+# 模型下载器 (lazy import to avoid circular imports)
+_downloader = None
+
+def _get_downloader():
+    """Get or create model downloader instance."""
+    global _downloader
+    if _downloader is None:
+        from model_downloader import ModelDownloader
+        _downloader = ModelDownloader(base_path=SCRIPT_DIR, verbose=True)
+    return _downloader
+
+
+# ============================================================================
+# Model Registry Functions (Phase 2)
+# ============================================================================
+
+def list_models(show_installed_only: bool = False, show_uninstalled_only: bool = False) -> list:
+    """
+    List available Demucs models from official UVR registry.
+    
+    Args:
+        show_installed_only: If True, only show installed models
+        show_uninstalled_only: If True, only show uninstalled models
+        
+    Returns:
+        List of model info dictionaries
+    """
+    downloader = _get_downloader()
+    downloader.sync_registry()
+    
+    models = downloader.list_models('demucs', show_installed=True)
+    
+    if show_installed_only:
+        models = [m for m in models if m['installed']]
+    elif show_uninstalled_only:
+        models = [m for m in models if not m['installed']]
+    
+    return models
+
+
+def get_model_info(model_name: str) -> dict:
+    """
+    Get detailed information about a specific Demucs model.
+    
+    Args:
+        model_name: Model name or display name
+        
+    Returns:
+        Model info dictionary or None if not found
+    """
+    downloader = _get_downloader()
+    downloader.sync_registry()
+    return downloader.get_model_info(model_name, 'demucs')
+
+
+def download_model(model_name: str) -> tuple:
+    """
+    Download a specific Demucs model.
+    
+    Args:
+        model_name: Model name or display name
+        
+    Returns:
+        Tuple of (success: bool, message: str)
+    """
+    downloader = _get_downloader()
+    downloader.sync_registry()
+    return downloader.download_model(model_name, 'demucs')
+
+
+def resolve_model_path(model_identifier: str, model_dir: str = None, verbose: bool = True) -> str:
+    """
+    Resolve a model identifier to a local file path.
+    
+    If the identifier is a path to an existing file, return it.
+    If it's a model name, look it up in the registry and download if needed.
+    
+    Args:
+        model_identifier: File path or model name
+        model_dir: Optional model directory override
+        verbose: Whether to print progress
+        
+    Returns:
+        Local file path to the model
+        
+    Raises:
+        FileNotFoundError: If model cannot be found or downloaded
+    """
+    # First try the original find_demucs_model_path function
+    local_path = find_demucs_model_path(model_identifier, model_dir)
+    if local_path:
+        return local_path
+    
+    # Try model downloader
+    downloader = _get_downloader()
+    if verbose:
+        print(f"Looking up model in registry: {model_identifier}")
+    
+    success, result = downloader.ensure_model(model_identifier, 'demucs')
+    
+    if success:
+        if verbose:
+            print(f"Model path: {result}")
+        # For Demucs, we need to return the directory containing the yaml/th files
+        # The result is the path to one of the files, we need to return the yaml path for v3/v4
+        result_dir = os.path.dirname(result)
+        result_base = os.path.splitext(os.path.basename(result))[0]
+        
+        # Check for yaml file (v3/v4 models)
+        yaml_path = os.path.join(result_dir, f"{result_base}.yaml")
+        if os.path.isfile(yaml_path):
+            return yaml_path
+        
+        return result
+    else:
+        raise FileNotFoundError(f"Model not found: {model_identifier}. Error: {result}")
 
 
 def get_demucs_version(model_name):
@@ -405,6 +528,9 @@ def main():
     # 输出所有 stems（等同于 GUI "All Stems"）
     python demucs_headless_runner.py --model htdemucs --input song.wav --output ./output --gpu
     
+    # 使用模型名称（自动下载）
+    python demucs_headless_runner.py -m "htdemucs_ft" -i song.wav -o ./output --gpu
+    
     # 选择 Vocals stem（输出 Vocals + Instrumental，等同于 GUI 选择 "Vocals"）
     python demucs_headless_runner.py --model htdemucs --input song.wav --output ./output --gpu --stem Vocals
     
@@ -413,6 +539,12 @@ def main():
     
     # 只输出伴奏（选择 Vocals 但只要 secondary = Instrumental）
     python demucs_headless_runner.py --model htdemucs --input song.wav --output ./output --gpu --stem Vocals --secondary-only
+    
+    # 列出可用模型
+    python demucs_headless_runner.py --list
+    
+    # 下载模型
+    python demucs_headless_runner.py --download "htdemucs_ft"
 
 可用的 stem 选项:
     4-stem 模型: Vocals, Other, Bass, Drums
@@ -425,10 +557,23 @@ def main():
 """
     )
     
-    parser.add_argument('--model', '-m', required=True, help='模型名称或路径')
+    # Model registry and download options
+    registry_group = parser.add_argument_group('Model Registry')
+    registry_group.add_argument('--list', action='store_true', 
+                                help='列出可用的 Demucs 模型')
+    registry_group.add_argument('--list-installed', action='store_true',
+                                help='只列出已安装的模型')
+    registry_group.add_argument('--list-uninstalled', action='store_true',
+                                help='只列出未安装的模型')
+    registry_group.add_argument('--download', metavar='MODEL_NAME',
+                                help='下载模型（不进行推理）')
+    registry_group.add_argument('--model-info', metavar='MODEL_NAME',
+                                help='显示模型详细信息')
+    
+    parser.add_argument('--model', '-m', help='模型名称或路径（支持自动下载）')
     parser.add_argument('--model-dir', help='模型目录路径')
-    parser.add_argument('--input', '-i', required=True, help='输入音频文件路径')
-    parser.add_argument('--output', '-o', required=True, help='输出目录路径')
+    parser.add_argument('--input', '-i', help='输入音频文件路径')
+    parser.add_argument('--output', '-o', help='输出目录路径')
     parser.add_argument('--name', '-n', help='输出文件基名')
     
     parser.add_argument('--gpu', action='store_true', help='使用 GPU')
@@ -451,10 +596,93 @@ def main():
     
     args = parser.parse_args()
     
-    # 查找模型路径
-    model_path = find_demucs_model_path(args.model, args.model_dir)
-    if model_path is None:
-        print(f"错误: 找不到模型 '{args.model}'", file=sys.stderr)
+    # Handle model registry operations first
+    if args.list or args.list_installed or args.list_uninstalled:
+        try:
+            models = list_models(
+                show_installed_only=args.list_installed,
+                show_uninstalled_only=args.list_uninstalled
+            )
+            
+            label = "已安装" if args.list_installed else "未安装" if args.list_uninstalled else "可用"
+            print(f"\n{label}的 Demucs 模型:")
+            print("=" * 60)
+            
+            if not models:
+                print(f"  没有找到{label}的模型。")
+            else:
+                for model in models:
+                    status = "Y" if model['installed'] else "N"
+                    print(f"  [{status}] {model['name']}")
+                print(f"\n总计: {len(models)} 个模型")
+            
+            return 0
+        except Exception as e:
+            print(f"列出模型时出错: {e}", file=sys.stderr)
+            return 1
+    
+    if args.download:
+        try:
+            print(f"下载模型: {args.download}")
+            success, message = download_model(args.download)
+            print(message)
+            return 0 if success else 1
+        except Exception as e:
+            print(f"下载模型时出错: {e}", file=sys.stderr)
+            return 1
+    
+    if args.model_info:
+        try:
+            info = get_model_info(args.model_info)
+            if info:
+                print(f"\n模型信息: {info['name']}")
+                print("=" * 60)
+                print(f"  显示名称: {info['display_name']}")
+                print(f"  已安装: {'是' if info['installed'] else '否'}")
+                print(f"  目录: {info['subdir']}")
+                if info.get('is_multi_file'):
+                    print(f"  文件:")
+                    for f in info['files'].keys():
+                        print(f"    - {f}")
+            else:
+                print(f"未找到模型: {args.model_info}")
+                return 1
+            return 0
+        except Exception as e:
+            print(f"获取模型信息时出错: {e}", file=sys.stderr)
+            return 1
+    
+    # Import error handler
+    from error_handler import (
+        classify_error, format_error_message, ErrorCategory,
+        validate_audio_file, validate_output_directory
+    )
+    
+    # Validate required arguments for inference
+    if not args.model:
+        parser.error("--model is required for inference (or use --list/--download for model management)")
+    if not args.input:
+        parser.error("--input is required for inference")
+    if not args.output:
+        parser.error("--output is required for inference")
+    
+    # Validate input file
+    is_valid, msg = validate_audio_file(args.input)
+    if not is_valid:
+        print(f"Error: {msg}", file=sys.stderr)
+        return 1
+    
+    # Validate output directory
+    is_valid, msg = validate_output_directory(args.output)
+    if not is_valid:
+        print(f"Error: {msg}", file=sys.stderr)
+        return 1
+    
+    # 查找模型路径（支持自动下载）
+    try:
+        model_path = resolve_model_path(args.model, args.model_dir, verbose=not args.quiet)
+    except FileNotFoundError as e:
+        print(f"错误: {e}", file=sys.stderr)
         print(f"搜索的目录:", file=sys.stderr)
         print(f"  - {DEFAULT_DEMUCS_V3_V4_DIR}", file=sys.stderr)
         print(f"  - {DEFAULT_DEMUCS_DIR}", file=sys.stderr)
@@ -473,31 +701,65 @@ def main():
     if args.stem:
         demucs_stems = args.stem
     
-    try:
-        run_demucs_headless(
-            model_path=model_path,
-            audio_file=args.input,
-            export_path=args.output,
-            audio_file_base=args.name,
-            use_gpu=use_gpu,
-            device_set=args.device,
-            is_use_directml=args.directml,
-            shifts=args.shifts,
-            overlap=args.overlap,
-            segment=args.segment,
-            wav_type_set=args.wav_type,
-            demucs_stems=demucs_stems,
-            primary_only=args.primary_only,
-            secondary_only=args.secondary_only,
-            verbose=not args.quiet
-        )
-        
-        return 0
-    except Exception as e:
-        import traceback
-        print(f"错误: {e}", file=sys.stderr)
-        traceback.print_exc()
-        return 1
+    # Try GPU first, fall back to CPU on GPU errors
+    gpu_fallback_attempted = False
+    current_use_gpu = use_gpu
+    
+    while True:
+        try:
+            run_demucs_headless(
+                model_path=model_path,
+                audio_file=args.input,
+                export_path=args.output,
+                audio_file_base=args.name,
+                use_gpu=current_use_gpu,
+                device_set=args.device,
+                is_use_directml=args.directml if not gpu_fallback_attempted else False,
+                shifts=args.shifts,
+                overlap=args.overlap,
+                segment=args.segment,
+                wav_type_set=args.wav_type,
+                demucs_stems=demucs_stems,
+                primary_only=args.primary_only,
+                secondary_only=args.secondary_only,
+                verbose=not args.quiet
+            )
+            
+            return 0
+            
+        except Exception as e:
+            error_info = classify_error(e)
+            
+            # Check if GPU error and can fall back to CPU
+            if (error_info["category"] == ErrorCategory.GPU 
+                and error_info["recoverable"] 
+                and not gpu_fallback_attempted
+                and current_use_gpu is not False):
+                
+                print(format_error_message(error_info, verbose=not args.quiet), file=sys.stderr)
+                print("Attempting to fall back to CPU mode...\n", file=sys.stderr)
+                
+                gpu_fallback_attempted = True
+                current_use_gpu = False
+                
+                # Clear GPU memory if possible
+                try:
+                    import torch
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                except:
+                    pass
+                
+                continue  # Retry with CPU
+            
+            # Non-recoverable error or already tried fallback
+            print(format_error_message(error_info, verbose=not args.quiet), file=sys.stderr)
+            
+            if not args.quiet:
+                import traceback
+                traceback.print_exc()
+            
+            return 1
 
 
 if __name__ == '__main__':

@@ -6,8 +6,17 @@ Run MDX-Net model separation without GUI
 Usage:
     python mdx_headless_runner.py --model model.ckpt --input input.wav --output output/
     
+    # Use model name (auto-download if not installed)
+    python mdx_headless_runner.py -m "UVR-MDX-NET Inst HQ 3" -i input.wav -o output/ --gpu
+    
     # Use JSON config file (for non-standard models)
     python mdx_headless_runner.py --model model.ckpt --json config.json --input input.wav --output output/
+    
+    # List available models
+    python mdx_headless_runner.py --list
+    
+    # Download a model without inference
+    python mdx_headless_runner.py --download "UVR-MDX-NET Inst HQ 3"
 """
 
 import os
@@ -70,6 +79,125 @@ cpu = torch.device('cpu')
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_MODEL_DATA_JSON = os.path.join(SCRIPT_DIR, 'models', 'MDX_Net_Models', 'model_data', 'model_data.json')
 DEFAULT_MDX_C_CONFIG_PATH = os.path.join(SCRIPT_DIR, 'models', 'MDX_Net_Models', 'model_data', 'mdx_c_configs')
+
+# 模型下载器 (lazy import to avoid circular imports)
+_downloader = None
+
+def _get_downloader():
+    """Get or create model downloader instance."""
+    global _downloader
+    if _downloader is None:
+        from model_downloader import ModelDownloader
+        _downloader = ModelDownloader(base_path=SCRIPT_DIR, verbose=True)
+    return _downloader
+
+
+# ============================================================================
+# Model Registry Functions (Phase 2)
+# ============================================================================
+
+def list_models(show_installed_only: bool = False, show_uninstalled_only: bool = False) -> list:
+    """
+    List available MDX-Net models from official UVR registry.
+    
+    Args:
+        show_installed_only: If True, only show installed models
+        show_uninstalled_only: If True, only show uninstalled models
+        
+    Returns:
+        List of model info dictionaries
+    """
+    downloader = _get_downloader()
+    downloader.sync_registry()
+    
+    models = downloader.list_models('mdx', show_installed=True)
+    
+    if show_installed_only:
+        models = [m for m in models if m['installed']]
+    elif show_uninstalled_only:
+        models = [m for m in models if not m['installed']]
+    
+    return models
+
+
+def get_model_info(model_name: str) -> dict:
+    """
+    Get detailed information about a specific MDX-Net model.
+    
+    Args:
+        model_name: Model name or display name
+        
+    Returns:
+        Model info dictionary or None if not found
+    """
+    downloader = _get_downloader()
+    downloader.sync_registry()
+    return downloader.get_model_info(model_name, 'mdx')
+
+
+def download_model(model_name: str) -> tuple:
+    """
+    Download a specific MDX-Net model.
+    
+    Args:
+        model_name: Model name or display name
+        
+    Returns:
+        Tuple of (success: bool, message: str)
+    """
+    downloader = _get_downloader()
+    downloader.sync_registry()
+    return downloader.download_model(model_name, 'mdx')
+
+
+def resolve_model_path(model_identifier: str, verbose: bool = True) -> str:
+    """
+    Resolve a model identifier to a local file path.
+    
+    If the identifier is a path to an existing file, return it.
+    If it's a model name, look it up in the registry and download if needed.
+    
+    Args:
+        model_identifier: File path or model name
+        verbose: Whether to print progress
+        
+    Returns:
+        Local file path to the model
+        
+    Raises:
+        FileNotFoundError: If model cannot be found or downloaded
+    """
+    # Check if it's already a valid file path
+    if os.path.isfile(model_identifier):
+        return model_identifier
+    
+    # Check if it's a path that might exist in standard locations
+    if os.path.sep in model_identifier or '/' in model_identifier:
+        # It looks like a path - try some common bases
+        candidates = [
+            model_identifier,
+            os.path.join(SCRIPT_DIR, model_identifier),
+            os.path.join(SCRIPT_DIR, 'models', 'MDX_Net_Models', os.path.basename(model_identifier)),
+        ]
+        for candidate in candidates:
+            if os.path.isfile(candidate):
+                return candidate
+        # Path not found
+        raise FileNotFoundError(f"Model file not found: {model_identifier}")
+    
+    # Treat as model name - look up in registry
+    downloader = _get_downloader()
+    if verbose:
+        print(f"Looking up model: {model_identifier}")
+    
+    success, result = downloader.ensure_model(model_identifier, 'mdx')
+    
+    if success:
+        if verbose:
+            print(f"Model path: {result}")
+        return result
+    else:
+        raise FileNotFoundError(f"Model not found: {model_identifier}. Error: {result}")
 
 
 def get_model_hash(model_path):
@@ -668,10 +796,17 @@ def run_mdx_headless(
     Headless MDX-Net 运行器主函数
     
     直接使用 UVR 原有的 SeperateMDX 和 SeperateMDXC 类
+    
+    Args:
+        model_path: 模型文件路径或模型名称（支持自动下载）
+        audio_file: 输入音频文件路径
+        export_path: 输出目录路径
+        ...
     """
+    # 解析模型路径（支持模型名称和自动下载）
+    resolved_model_path = resolve_model_path(model_path, verbose=verbose)
+    
     # 验证输入
-    if not os.path.isfile(model_path):
-        raise FileNotFoundError(f"Model file not found: {model_path}")
     if not os.path.isfile(audio_file):
         raise FileNotFoundError(f"Audio file not found: {audio_file}")
     if not os.path.isdir(export_path):
@@ -707,7 +842,7 @@ def run_mdx_headless(
     wav_type = wav_type_map.get(wav_type_set, 'PCM_24')
     
     model_data = create_model_data(
-        model_path,
+        resolved_model_path,
         use_gpu=use_gpu if use_gpu is not None else cuda_available,
         device_set=device_set,
         is_use_directml=is_use_directml,
@@ -745,7 +880,7 @@ def run_mdx_headless(
         print(f"=" * 50)
         print(f"MDX-Net Headless Runner")
         print(f"=" * 50)
-        print(f"Model: {model_path}")
+        print(f"Model: {resolved_model_path}")
         print(f"Input: {audio_file}")
         print(f"Output: {export_path}")
         print(f"Device: {'GPU' if model_data.is_gpu_conversion >= 0 else 'CPU'}")
@@ -777,8 +912,11 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Basic usage
+  # Basic usage with model file path
   python mdx_headless_runner.py -m model.ckpt -i input.wav -o output/
+  
+  # Use model name (auto-download if not installed)
+  python mdx_headless_runner.py -m "UVR-MDX-NET Inst HQ 3" -i input.wav -o output/ --gpu
   
   # Use JSON config (for non-standard models like MelBand-Roformer)
   python mdx_headless_runner.py -m model.ckpt --json config.json -i input.wav -o output/
@@ -788,12 +926,32 @@ Examples:
   
   # Use GPU
   python mdx_headless_runner.py -m model.ckpt -i input.wav -o output/ --gpu
+  
+  # List available models
+  python mdx_headless_runner.py --list
+  
+  # Download a model without inference
+  python mdx_headless_runner.py --download "UVR-MDX-NET Inst HQ 3"
 """
     )
     
-    parser.add_argument('--model', '-m', required=True, help='Model file path (.ckpt)')
-    parser.add_argument('--input', '-i', required=True, help='Input audio file path')
-    parser.add_argument('--output', '-o', required=True, help='Output directory path')
+    # Model registry and download options
+    registry_group = parser.add_argument_group('Model Registry')
+    registry_group.add_argument('--list', action='store_true', 
+                                help='List available MDX-Net models from official UVR registry')
+    registry_group.add_argument('--list-installed', action='store_true',
+                                help='List only installed models')
+    registry_group.add_argument('--list-uninstalled', action='store_true',
+                                help='List only uninstalled models')
+    registry_group.add_argument('--download', metavar='MODEL_NAME',
+                                help='Download a model without running inference')
+    registry_group.add_argument('--model-info', metavar='MODEL_NAME',
+                                help='Show detailed info for a model')
+    
+    # Main arguments (not required if using --list or --download)
+    parser.add_argument('--model', '-m', help='Model file path or model name (supports auto-download)')
+    parser.add_argument('--input', '-i', help='Input audio file path')
+    parser.add_argument('--output', '-o', help='Output directory path')
     parser.add_argument('--name', '-n', help='Output filename base (optional)')
     parser.add_argument('--json', help='Model JSON config file path (required for non-standard models)')
     parser.add_argument('--gpu', action='store_true', help='Use GPU')
@@ -823,6 +981,83 @@ Examples:
     
     args = parser.parse_args()
     
+    # Handle model registry operations first
+    if args.list or args.list_installed or args.list_uninstalled:
+        try:
+            models = list_models(
+                show_installed_only=args.list_installed,
+                show_uninstalled_only=args.list_uninstalled
+            )
+            
+            label = "Installed" if args.list_installed else "Uninstalled" if args.list_uninstalled else "Available"
+            print(f"\n{label} MDX-Net Models:")
+            print("=" * 60)
+            
+            if not models:
+                print(f"  No {label.lower()} models found.")
+            else:
+                for model in models:
+                    status = "Y" if model['installed'] else "N"
+                    print(f"  [{status}] {model['name']}")
+                print(f"\nTotal: {len(models)} models")
+            
+            return 0
+        except Exception as e:
+            print(f"Error listing models: {e}", file=sys.stderr)
+            return 1
+    
+    if args.download:
+        try:
+            print(f"Downloading model: {args.download}")
+            success, message = download_model(args.download)
+            print(message)
+            return 0 if success else 1
+        except Exception as e:
+            print(f"Error downloading model: {e}", file=sys.stderr)
+            return 1
+    
+    if args.model_info:
+        try:
+            from model_downloader import fuzzy_match_model, ModelNotFoundError
+            
+            info = get_model_info(args.model_info)
+            if info:
+                print(f"\nModel Info: {info['name']}")
+                print("=" * 60)
+                print(f"  Display Name: {info['display_name']}")
+                print(f"  Installed: {'Yes' if info['installed'] else 'No'}")
+                print(f"  Directory: {info['subdir']}")
+                if info.get('is_multi_file'):
+                    print(f"  Files:")
+                    for f in info['files'].keys():
+                        print(f"    - {f}")
+                else:
+                    print(f"  Filename: {info.get('filename', 'N/A')}")
+            else:
+                # Try fuzzy matching to provide suggestions
+                all_models = list_models()
+                all_names = [m['name'] for m in all_models]
+                similar = fuzzy_match_model(args.model_info, all_names)
+                
+                print(f"Model not found: {args.model_info}")
+                if similar:
+                    print(f"\nDid you mean one of these?")
+                    for name in similar[:5]:
+                        print(f"  - {name}")
+                return 1
+            return 0
+        except Exception as e:
+            print(f"Error getting model info: {e}", file=sys.stderr)
+            return 1
+    
+    # Validate required arguments for inference
+    if not args.model:
+        parser.error("--model is required for inference (or use --list/--download for model management)")
+    if not args.input:
+        parser.error("--input is required for inference")
+    if not args.output:
+        parser.error("--output is required for inference")
+    
     # 互斥检查
     primary_flags = [args.primary_only, args.dry_only, args.vocals_only]
     secondary_flags = [args.secondary_only, args.no_dry_only, args.instrumental_only]
@@ -837,38 +1072,89 @@ Examples:
     elif args.gpu:
         use_gpu = True
     
-    try:
-        run_mdx_headless(
-            model_path=args.model,
-            audio_file=args.input,
-            export_path=args.output,
-            audio_file_base=args.name,
-            use_gpu=use_gpu,
-            device_set=args.device,
-            is_use_directml=args.directml,
-            mdx_segment_size=args.segment_size,
-            overlap_mdx=args.overlap,
-            overlap_mdx23=args.overlap_mdxc,
-            mdx_batch_size=args.batch_size,
-            wav_type_set=args.wav_type,
-            model_json_path=args.json,
-            primary_only=args.primary_only,
-            secondary_only=args.secondary_only,
-            dry_only=args.dry_only,
-            no_dry_only=args.no_dry_only,
-            vocals_only=args.vocals_only,
-            instrumental_only=args.instrumental_only,
-            stem=args.stem,
-            verbose=not args.quiet
-        )
-        
-        return 0
-    except Exception as e:
-        import traceback
-        print(f"Error: {e}", file=sys.stderr)
-        if not args.quiet:
-            traceback.print_exc()
+    # Import error handler
+    from error_handler import (
+        classify_error, format_error_message, ErrorCategory,
+        validate_audio_file, validate_output_directory
+    )
+    
+    # Validate input file
+    is_valid, msg = validate_audio_file(args.input)
+    if not is_valid:
+        print(f"Error: {msg}", file=sys.stderr)
         return 1
+    
+    # Validate output directory
+    is_valid, msg = validate_output_directory(args.output)
+    if not is_valid:
+        print(f"Error: {msg}", file=sys.stderr)
+        return 1
+    
+    # Try GPU first, fall back to CPU on GPU errors
+    gpu_fallback_attempted = False
+    current_use_gpu = use_gpu
+    
+    while True:
+        try:
+            run_mdx_headless(
+                model_path=args.model,
+                audio_file=args.input,
+                export_path=args.output,
+                audio_file_base=args.name,
+                use_gpu=current_use_gpu,
+                device_set=args.device,
+                is_use_directml=args.directml if not gpu_fallback_attempted else False,
+                mdx_segment_size=args.segment_size,
+                overlap_mdx=args.overlap,
+                overlap_mdx23=args.overlap_mdxc,
+                mdx_batch_size=args.batch_size,
+                wav_type_set=args.wav_type,
+                model_json_path=args.json,
+                primary_only=args.primary_only,
+                secondary_only=args.secondary_only,
+                dry_only=args.dry_only,
+                no_dry_only=args.no_dry_only,
+                vocals_only=args.vocals_only,
+                instrumental_only=args.instrumental_only,
+                stem=args.stem,
+                verbose=not args.quiet
+            )
+            
+            return 0
+            
+        except Exception as e:
+            error_info = classify_error(e)
+            
+            # Check if GPU error and can fall back to CPU
+            if (error_info["category"] == ErrorCategory.GPU 
+                and error_info["recoverable"] 
+                and not gpu_fallback_attempted
+                and current_use_gpu is not False):
+                
+                print(format_error_message(error_info, verbose=not args.quiet), file=sys.stderr)
+                print("Attempting to fall back to CPU mode...\n", file=sys.stderr)
+                
+                gpu_fallback_attempted = True
+                current_use_gpu = False
+                
+                # Clear GPU memory if possible
+                try:
+                    import torch
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                except:
+                    pass
+                
+                continue  # Retry with CPU
+            
+            # Non-recoverable error or already tried fallback
+            print(format_error_message(error_info, verbose=not args.quiet), file=sys.stderr)
+            
+            if not args.quiet:
+                import traceback
+                traceback.print_exc()
+            
+            return 1
 
 
 if __name__ == '__main__':

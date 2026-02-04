@@ -75,6 +75,8 @@
 | 🔧 **Zero Config** | Auto-detect model parameters |
 | 📦 **Batch Ready** | Perfect for automation & pipelines |
 | 🎚️ **Bit Depth Control** | 16/24/32-bit PCM, 32/64-bit float |
+| 📥 **Auto Download** | Official UVR model registry with auto-download |
+| 🛡️ **Robust Error Handling** | GPU fallback, retry, fuzzy matching |
 
 ---
 
@@ -235,6 +237,99 @@ python vr_headless_runner.py -m "model.pth" -i "song.flac" -o "output/" --gpu
 python vr_headless_runner.py -m "model.pth" -i "song.flac" -o "output/" --gpu \
     --param 4band_v3 --primary-stem Vocals
 ```
+
+---
+
+## 📥 Model Download Center
+
+All runners now include **automatic model downloading** from official UVR sources - just like the GUI!
+
+### List Available Models
+
+```bash
+# List all MDX-Net models
+python mdx_headless_runner.py --list
+
+# List only installed models
+python mdx_headless_runner.py --list-installed
+
+# List models not yet downloaded
+python mdx_headless_runner.py --list-uninstalled
+
+# Same for Demucs and VR
+python demucs_headless_runner.py --list
+python vr_headless_runner.py --list
+```
+
+### Download Models
+
+```bash
+# Download a specific model (without running inference)
+python mdx_headless_runner.py --download "UVR-MDX-NET Inst HQ 3"
+python demucs_headless_runner.py --download "htdemucs_ft"
+python vr_headless_runner.py --download "UVR-De-Echo-Normal by FoxJoy"
+```
+
+### Auto-Download on Inference
+
+```bash
+# Just use the model name - it will download automatically if not installed!
+python mdx_headless_runner.py -m "UVR-MDX-NET Inst HQ 3" -i "song.flac" -o "output/" --gpu
+
+# Demucs models auto-download too
+python demucs_headless_runner.py --model htdemucs_ft --input "song.flac" --output "output/" --gpu
+```
+
+### Model Info & Fuzzy Matching
+
+```bash
+# Get detailed info about a model
+python mdx_headless_runner.py --model-info "UVR-MDX-NET Inst HQ 3"
+
+# Typo? Get suggestions!
+python mdx_headless_runner.py --model-info "UVR-MDX Inst HQ"
+# Output: Did you mean: UVR-MDX-NET Inst HQ 1, UVR-MDX-NET Inst HQ 2, ...
+```
+
+### Features
+
+| Feature | Description |
+|---------|-------------|
+| 🌐 **Official Registry** | Syncs with UVR's official model list |
+| 🔄 **Resume Downloads** | Interrupted downloads can be resumed |
+| ⏱️ **Retry with Backoff** | Automatic retry on network errors |
+| 💾 **Disk Space Check** | Pre-checks available space before download |
+| 🔍 **Fuzzy Matching** | Suggests similar model names on typos |
+| ✅ **Integrity Check** | Validates downloaded files |
+
+---
+
+## 🛡️ Error Handling & GPU Fallback
+
+All runners include **robust error handling** with automatic GPU-to-CPU fallback:
+
+```bash
+# If GPU runs out of memory, automatically falls back to CPU
+python mdx_headless_runner.py -m "model.ckpt" -i "song.flac" -o "output/" --gpu
+
+# Output on GPU error:
+# ============================================================
+# ERROR: GPU memory exhausted
+# ============================================================
+# Suggestion: Try: (1) Use --cpu flag, (2) Reduce --batch-size...
+#
+# Attempting to fall back to CPU mode...
+```
+
+### Error Messages
+
+Errors now include clear explanations and suggestions:
+
+| Before | After |
+|--------|-------|
+| `FileNotFoundError` | `Audio file not found: song.wav` |
+| `CUDA out of memory` | `GPU memory exhausted. Try: --cpu or reduce --batch-size` |
+| `Model not found` | `Model 'xyz' not found. Did you mean: UVR-MDX-NET...?` |
 
 ---
 
@@ -502,10 +597,42 @@ pip install torch torchvision torchaudio --index-url https://download.pytorch.or
 <details>
 <summary><b>❌ Model not found</b></summary>
 
+**Option 1: Use automatic download (recommended)**
+```bash
+# List available models
+python mdx_headless_runner.py --list
+
+# Download the model
+python mdx_headless_runner.py --download "UVR-MDX-NET Inst HQ 3"
+
+# Or just use it - auto-downloads!
+python mdx_headless_runner.py -m "UVR-MDX-NET Inst HQ 3" -i song.wav -o output/
+```
+
+**Option 2: Manual download**
+
 Default locations:
-- **MDX**: `C:\Users\{user}\AppData\Local\Programs\Ultimate Vocal Remover\models\MDX_Net_Models\`
-- **Demucs**: Auto-downloaded to `~/.cache/torch/hub/`
-- **VR**: `C:\Users\{user}\AppData\Local\Programs\Ultimate Vocal Remover\models\VR_Models\`
+- **MDX**: `./models/MDX_Net_Models/`
+- **Demucs**: `./models/Demucs_Models/v3_v4_repo/`
+- **VR**: `./models/VR_Models/`
+
+</details>
+
+<details>
+<summary><b>❌ Network/Download errors</b></summary>
+
+```bash
+# Force refresh model registry
+python model_downloader.py --sync
+
+# Check network connectivity
+python -c "import urllib.request; urllib.request.urlopen('https://github.com')"
+```
+
+The downloader includes:
+- Automatic retry (3 attempts with exponential backoff)
+- Resume interrupted downloads
+- Fallback to cached registry
 
 </details>
 

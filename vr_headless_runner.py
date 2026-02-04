@@ -38,6 +38,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 # 导入必需的模块
 from separate import SeperateVR, prepare_mix
 from lib_v5.vr_network.model_param_init import ModelParameters
+from model_downloader import ModelDownloader
 from gui_data.constants import (
     VR_ARCH_TYPE,
     VOCAL_STEM,
@@ -77,6 +78,147 @@ VR_PARAM_DIR = os.path.join(SCRIPT_DIR, 'lib_v5', 'vr_network', 'modelparams')
 # 全局哈希缓存 - 与 UVR.py line 315 完全一致
 # ============================================================================
 model_hash_table = {}
+
+
+# ============================================================================
+# 模型下载和注册表功能
+# ============================================================================
+
+def get_model_downloader(verbose: bool = True) -> ModelDownloader:
+    """获取模型下载器实例"""
+    downloader = ModelDownloader(base_path=SCRIPT_DIR, verbose=verbose)
+    downloader.sync_registry()
+    return downloader
+
+
+def list_models(show_installed_only: bool = False, show_uninstalled_only: bool = False, verbose: bool = True) -> list:
+    """
+    列出所有可用的 VR 模型
+    
+    Args:
+        show_installed_only: 仅显示已安装的模型
+        show_uninstalled_only: 仅显示未安装的模型
+        verbose: 是否显示详细信息
+        
+    Returns:
+        模型列表
+    """
+    downloader = get_model_downloader(verbose=verbose)
+    models = downloader.list_models('vr', show_installed=True)
+    
+    if show_installed_only:
+        models = [m for m in models if m['installed']]
+    elif show_uninstalled_only:
+        models = [m for m in models if not m['installed']]
+    
+    return models
+
+
+def get_model_info(model_name: str, verbose: bool = True) -> dict:
+    """
+    获取指定模型的详细信息
+    
+    Args:
+        model_name: 模型名称
+        verbose: 是否显示详细信息
+        
+    Returns:
+        模型信息字典
+    """
+    downloader = get_model_downloader(verbose=verbose)
+    return downloader.get_model_info(model_name, 'vr')
+
+
+def download_model(model_name: str, verbose: bool = True) -> tuple:
+    """
+    下载指定的 VR 模型
+    
+    Args:
+        model_name: 模型名称
+        verbose: 是否显示详细信息
+        
+    Returns:
+        (成功与否, 消息)
+    """
+    downloader = get_model_downloader(verbose=verbose)
+    return downloader.download_model(model_name, 'vr')
+
+
+def resolve_model_path(model_identifier: str, verbose: bool = True) -> str:
+    """
+    解析模型标识符并返回本地模型路径
+    
+    如果模型标识符是一个存在的文件路径，直接返回。
+    如果模型标识符是模型名称且本地不存在，尝试从远程下载。
+    
+    Args:
+        model_identifier: 模型路径或模型名称
+        verbose: 是否显示详细信息
+        
+    Returns:
+        模型文件的本地路径
+        
+    Raises:
+        FileNotFoundError: 如果模型无法找到或下载失败
+    """
+    # 1. 如果是完整路径且文件存在
+    if os.path.isfile(model_identifier):
+        if verbose:
+            print(f"使用本地模型文件: {model_identifier}")
+        return model_identifier
+    
+    # 2. 尝试在 VR_MODELS_DIR 中查找
+    if not model_identifier.endswith('.pth'):
+        model_filename = f"{model_identifier}.pth"
+    else:
+        model_filename = model_identifier
+    
+    local_path = os.path.join(VR_MODELS_DIR, model_filename)
+    if os.path.isfile(local_path):
+        if verbose:
+            print(f"找到本地模型: {local_path}")
+        return local_path
+    
+    # 3. 尝试通过模型名称在远程注册表中查找
+    downloader = get_model_downloader(verbose=verbose)
+    
+    # 移除 .pth 后缀进行搜索
+    model_name = model_identifier.replace('.pth', '')
+    model_info = downloader.get_model_info(model_name, 'vr')
+    
+    if model_info:
+        if model_info.get('installed'):
+            # 模型已安装，返回本地路径
+            if model_info.get('is_multi_file'):
+                # VR 通常是单文件，但处理多文件情况
+                for f in model_info['files'].keys():
+                    path = os.path.join(VR_MODELS_DIR, f)
+                    if os.path.isfile(path):
+                        return path
+            else:
+                return model_info['local_path']
+        else:
+            # 模型未安装，下载
+            if verbose:
+                print(f"模型 '{model_name}' 未安装，正在下载...")
+            
+            success, result = downloader.ensure_model(model_name, 'vr')
+            if success:
+                if verbose:
+                    print(f"下载完成: {result}")
+                return result
+            else:
+                raise FileNotFoundError(f"下载模型失败: {result}")
+    
+    # 4. 没有找到匹配的模型
+    raise FileNotFoundError(
+        f"无法找到模型: {model_identifier}\n"
+        f"搜索路径:\n"
+        f"  - {model_identifier} (完整路径)\n"
+        f"  - {local_path} (VR模型目录)\n"
+        f"  - 远程模型注册表 (名称: {model_name})\n"
+        f"\n提示: 使用 --list 查看所有可用模型"
+    )
 
 
 # ============================================================================
@@ -644,6 +786,9 @@ Examples:
   # 基本用法（如果模型在数据库中）
   python vr_headless_runner.py -m model.pth -i input.wav -o output/
   
+  # 使用模型名称（支持自动下载）
+  python vr_headless_runner.py -m "UVR-De-Echo-Normal" -i input.wav -o output/
+  
   # 指定模型参数（如果模型不在数据库中）
   python vr_headless_runner.py -m model.pth --param 4band_v3 --primary-stem Vocals -i input.wav -o output/
   
@@ -655,14 +800,31 @@ Examples:
   
   # 只输出 vocals
   python vr_headless_runner.py -m model.pth -i input.wav -o output/ --primary-only
+  
+  # 列出所有可用模型
+  python vr_headless_runner.py --list
+  
+  # 列出未安装的模型
+  python vr_headless_runner.py --list-uninstalled
+  
+  # 仅下载模型不推理
+  python vr_headless_runner.py --download "UVR-De-Echo-Normal"
 
 Available model params:
 """ + '\n'.join(f"  - {p}" for p in list_available_params())
     )
     
-    parser.add_argument('--model', '-m', required=True, help='Model file path (.pth)')
-    parser.add_argument('--input', '-i', required=True, help='Input audio file path')
-    parser.add_argument('--output', '-o', required=True, help='Output directory path')
+    # 模型管理选项
+    model_mgmt_group = parser.add_argument_group('Model Management')
+    model_mgmt_group.add_argument('--list', action='store_true', help='列出所有可用模型')
+    model_mgmt_group.add_argument('--list-installed', action='store_true', help='仅列出已安装的模型')
+    model_mgmt_group.add_argument('--list-uninstalled', action='store_true', help='仅列出未安装的模型')
+    model_mgmt_group.add_argument('--download', metavar='MODEL_NAME', help='下载指定模型（不运行推理）')
+    model_mgmt_group.add_argument('--model-info', metavar='MODEL_NAME', help='显示指定模型的详细信息')
+    
+    parser.add_argument('--model', '-m', help='模型文件路径或名称（推理时必需）')
+    parser.add_argument('--input', '-i', help='输入音频文件路径（推理时必需）')
+    parser.add_argument('--output', '-o', help='输出目录路径（推理时必需）')
     parser.add_argument('--name', '-n', help='Output filename base (optional)')
     
     # 模型参数（当哈希查找失败时使用，模拟弹窗输入）
@@ -702,6 +864,7 @@ Available model params:
                              help='Output audio bit depth (default: PCM_16)')
     
     parser.add_argument('--list-params', action='store_true', help='List available model params and exit')
+    parser.add_argument('--quiet', '-q', action='store_true', help='静默模式（减少输出）')
     
     args = parser.parse_args()
     
@@ -712,9 +875,103 @@ Available model params:
             print(f"  - {p}")
         return 0
     
+    # 处理模型管理选项
+    if args.list or args.list_installed or args.list_uninstalled:
+        try:
+            models = list_models(
+                show_installed_only=args.list_installed,
+                show_uninstalled_only=args.list_uninstalled,
+                verbose=not args.quiet
+            )
+            
+            label = "已安装" if args.list_installed else "未安装" if args.list_uninstalled else "可用"
+            print(f"\n{label}的 VR 模型:")
+            print("=" * 60)
+            
+            if not models:
+                print(f"  没有找到{label}的模型。")
+            else:
+                for model in models:
+                    status = "Y" if model['installed'] else "N"
+                    print(f"  [{status}] {model['name']}")
+                print(f"\n总计: {len(models)} 个模型")
+            
+            return 0
+        except Exception as e:
+            print(f"列出模型时出错: {e}", file=sys.stderr)
+            return 1
+    
+    if args.download:
+        try:
+            print(f"下载模型: {args.download}")
+            success, message = download_model(args.download, verbose=not args.quiet)
+            print(message)
+            return 0 if success else 1
+        except Exception as e:
+            print(f"下载模型时出错: {e}", file=sys.stderr)
+            return 1
+    
+    if args.model_info:
+        try:
+            info = get_model_info(args.model_info, verbose=not args.quiet)
+            if info:
+                print(f"\n模型信息: {info['name']}")
+                print("=" * 60)
+                print(f"  显示名称: {info['display_name']}")
+                print(f"  已安装: {'是' if info['installed'] else '否'}")
+                print(f"  目录: {info['subdir']}")
+                if info.get('is_multi_file'):
+                    print(f"  文件:")
+                    for f in info['files'].keys():
+                        print(f"    - {f}")
+                else:
+                    print(f"  文件名: {info.get('filename', 'N/A')}")
+                    if info.get('url'):
+                        print(f"  URL: {info['url']}")
+            else:
+                print(f"未找到模型: {args.model_info}")
+                return 1
+            return 0
+        except Exception as e:
+            print(f"获取模型信息时出错: {e}", file=sys.stderr)
+            return 1
+    
+    # 验证推理所需的参数
+    if not args.model:
+        parser.error("--model 是推理所必需的参数（或使用 --list/--download 进行模型管理）")
+    if not args.input:
+        parser.error("--input 是推理所必需的参数")
+    if not args.output:
+        parser.error("--output 是推理所必需的参数")
+    
     # 互斥检查
     if args.primary_only and args.secondary_only:
         parser.error("Cannot specify both --primary-only and --secondary-only")
+    
+    # Import error handler
+    from error_handler import (
+        classify_error, format_error_message, ErrorCategory,
+        validate_audio_file, validate_output_directory
+    )
+    
+    # Validate input file
+    is_valid, msg = validate_audio_file(args.input)
+    if not is_valid:
+        print(f"Error: {msg}", file=sys.stderr)
+        return 1
+    
+    # Validate output directory
+    is_valid, msg = validate_output_directory(args.output)
+    if not is_valid:
+        print(f"Error: {msg}", file=sys.stderr)
+        return 1
+    
+    # 解析模型路径（支持自动下载）
+    try:
+        model_path = resolve_model_path(args.model, verbose=not args.quiet)
+    except FileNotFoundError as e:
+        print(f"错误: {e}", file=sys.stderr)
+        return 1
     
     # GPU 设置
     use_gpu = None
@@ -723,37 +980,70 @@ Available model params:
     elif args.gpu:
         use_gpu = True
     
-    try:
-        success = run_vr_headless(
-            model_path=args.model,
-            audio_file=args.input,
-            export_path=args.output,
-            audio_file_base=args.name,
-            use_gpu=use_gpu,
-            device_set=args.device,
-            is_use_directml=args.directml,
-            window_size=args.window_size,
-            aggression_setting=args.aggression,
-            batch_size=args.batch_size,
-            is_tta=args.tta,
-            is_post_process=args.post_process,
-            post_process_threshold=args.post_process_threshold,
-            is_high_end_process=args.high_end_process,
-            wav_type_set=args.wav_type,
-            user_vr_model_param=args.param,
-            user_primary_stem=args.primary_stem,
-            user_nout=args.nout,
-            user_nout_lstm=args.nout_lstm,
-            is_primary_stem_only=args.primary_only,
-            is_secondary_stem_only=args.secondary_only
-        )
-        
-        return 0 if success else 1
-    except Exception as e:
-        import traceback
-        print(f"Error: {e}", file=sys.stderr)
-        traceback.print_exc()
-        return 1
+    # Try GPU first, fall back to CPU on GPU errors
+    gpu_fallback_attempted = False
+    current_use_gpu = use_gpu
+    
+    while True:
+        try:
+            success = run_vr_headless(
+                model_path=model_path,
+                audio_file=args.input,
+                export_path=args.output,
+                audio_file_base=args.name,
+                use_gpu=current_use_gpu,
+                device_set=args.device,
+                is_use_directml=args.directml if not gpu_fallback_attempted else False,
+                window_size=args.window_size,
+                aggression_setting=args.aggression,
+                batch_size=args.batch_size,
+                is_tta=args.tta,
+                is_post_process=args.post_process,
+                post_process_threshold=args.post_process_threshold,
+                is_high_end_process=args.high_end_process,
+                wav_type_set=args.wav_type,
+                user_vr_model_param=args.param,
+                user_primary_stem=args.primary_stem,
+                user_nout=args.nout,
+                user_nout_lstm=args.nout_lstm,
+                is_primary_stem_only=args.primary_only,
+                is_secondary_stem_only=args.secondary_only
+            )
+            
+            return 0 if success else 1
+            
+        except Exception as e:
+            error_info = classify_error(e)
+            
+            # Check if GPU error and can fall back to CPU
+            if (error_info["category"] == ErrorCategory.GPU 
+                and error_info["recoverable"] 
+                and not gpu_fallback_attempted
+                and current_use_gpu is not False):
+                
+                print(format_error_message(error_info, verbose=not args.quiet), file=sys.stderr)
+                print("Attempting to fall back to CPU mode...\n", file=sys.stderr)
+                
+                gpu_fallback_attempted = True
+                current_use_gpu = False
+                
+                # Clear GPU memory if possible
+                try:
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                except:
+                    pass
+                
+                continue  # Retry with CPU
+            
+            # Non-recoverable error or already tried fallback
+            print(format_error_message(error_info, verbose=not args.quiet), file=sys.stderr)
+            
+            if not args.quiet:
+                import traceback
+                traceback.print_exc()
+            
+            return 1
 
 
 if __name__ == '__main__':
