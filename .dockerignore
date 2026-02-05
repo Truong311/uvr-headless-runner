@@ -1,93 +1,118 @@
 # ==============================================================================
-# Docker Build Ignore File
+# Docker Build Context Ignore File
+# ==============================================================================
+# Excludes unnecessary files from the Docker build context
+# This significantly reduces build time and image size
 # ==============================================================================
 
-# Git
+# Version control
 .git
 .gitignore
 .gitattributes
+.github
 
-# Python
+# Python cache and bytecode
 __pycache__
 *.py[cod]
 *$py.class
-*.so
+*.pyo
 .Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
+*.egg-info
 *.egg
+.eggs
 
 # Virtual environments
-.env
 .venv
-env/
-venv/
-ENV/
-env.bak/
-venv.bak/
+venv
+ENV
+env
+.env
+.env.*
 
-# Poetry
-poetry.lock
-
-# IDE
-.idea/
-.vscode/
+# IDE and editor files
+.idea
+.vscode
 *.swp
 *.swo
 *~
+.project
+.pydevproject
+.settings
 
-# OS
+# Test and coverage
+.pytest_cache
+.coverage
+htmlcov
+.tox
+.nox
+
+# Documentation build
+docs/_build
+site
+
+# Build artifacts
+build
+dist
+*.whl
+
+# Model files (should be mounted as volumes, not built into image)
+models/**/*.pth
+models/**/*.onnx
+models/**/*.ckpt
+models/**/*.th
+models/**/*.gz
+models/**/*.yaml
+!models/**/*.json
+
+# Audio files (test data)
+*.wav
+*.mp3
+*.flac
+*.ogg
+*.m4a
+*.aac
+
+# Large files
+*.zip
+*.tar
+*.tar.gz
+*.rar
+*.7z
+
+# OS files
 .DS_Store
 Thumbs.db
+desktop.ini
 
-# Testing
-.pytest_cache/
-.coverage
-htmlcov/
-.tox/
-.nox/
+# Docker files (not needed in context)
+docker-compose.yml
+docker-compose.*.yml
+Dockerfile.*
+!Dockerfile
 
 # Documentation
-docs/_build/
+*.md
+!DOCKER_README.md
+!DOCKER_README_CN.md
+LICENSE
 
-# Model files (will be mounted as volume)
-models/VR_Models/*.pth
-models/MDX_Net_Models/*.onnx
-models/MDX_Net_Models/*.ckpt
-models/Demucs_Models/*.th
-models/Demucs_Models/v3_v4_repo/*.th
-models/Demucs_Models/v3_v4_repo/*.yaml
-
-# Keep model metadata
-!models/VR_Models/model_data/
-!models/MDX_Net_Models/model_data/
-!models/Demucs_Models/model_data/
-
-# Cache
-.model_cache/
-*.tmp
+# Poetry (not needed in Docker - we use explicit pip install)
+poetry.lock
+pyproject.toml
+poetry
 
 # Logs
 *.log
+logs
 
-# Test files
-test_*.wav
-test_*.mp3
-output/
-input/
+# Temporary files
+tmp
+temp
+*.tmp
+*.temp
 
-# Docker specific
-docker/input/
-docker/output/
+# Input/output directories (typically mounted)
+input
+output
+Input
+Output

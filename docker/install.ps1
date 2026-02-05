@@ -4,16 +4,26 @@
 # This script installs native-style CLI wrappers for Windows.
 #
 # Usage:
-#   .\docker\install.ps1              # Install with auto-detected GPU support
-#   .\docker\install.ps1 -Cpu         # Force CPU-only installation
-#   .\docker\install.ps1 -Gpu         # Force GPU installation
-#   .\docker\install.ps1 -Uninstall   # Remove installed wrappers
+#   .\docker\install.ps1                     # Install with auto-detected GPU support (CUDA 12.4)
+#   .\docker\install.ps1 -Cpu                # Force CPU-only installation
+#   .\docker\install.ps1 -Gpu                # Force GPU installation (CUDA 12.4)
+#   .\docker\install.ps1 -Cuda cu121         # GPU with CUDA 12.1 (driver 530+)
+#   .\docker\install.ps1 -Cuda cu124         # GPU with CUDA 12.4 (driver 550+, default)
+#   .\docker\install.ps1 -Cuda cu128         # GPU with CUDA 12.8 (driver 560+)
+#   .\docker\install.ps1 -Uninstall          # Remove installed wrappers
+#
+# CUDA Version Options:
+#   cu121 - CUDA 12.1, requires NVIDIA driver 530+
+#   cu124 - CUDA 12.4, requires NVIDIA driver 550+ (default, recommended)
+#   cu128 - CUDA 12.8, requires NVIDIA driver 560+
 #
 # ==============================================================================
 
 param(
     [switch]$Cpu,
     [switch]$Gpu,
+    [ValidateSet("cu121", "cu124", "cu128")]
+    [string]$Cuda = "",
     [switch]$Uninstall,
     [switch]$Help
 )
@@ -26,6 +36,7 @@ $ProjectRoot = Split-Path -Parent $ScriptDir
 $InstallDir = if ($env:UVR_INSTALL_DIR) { $env:UVR_INSTALL_DIR } else { "$env:LOCALAPPDATA\UVR" }
 $ModelsDir = if ($env:UVR_MODELS_DIR) { $env:UVR_MODELS_DIR } else { "$env:USERPROFILE\.uvr_models" }
 $ImageName = "uvr-headless"
+$DefaultCudaVersion = if ($env:UVR_CUDA_VERSION) { $env:UVR_CUDA_VERSION } else { "cu124" }
 
 # ------------------------------------------------------------------------------
 # Helper Functions
@@ -37,15 +48,28 @@ function Write-Error { param($Message) Write-Host "[ERROR] $Message" -Foreground
 
 function Show-Banner {
     Write-Host ""
-    Write-Host "╔═══════════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
-    Write-Host "║        UVR Headless Runner - Windows Installation             ║" -ForegroundColor Cyan
-    Write-Host "╚═══════════════════════════════════════════════════════════════╝" -ForegroundColor Cyan
+    Write-Host "=========================================================" -ForegroundColor Cyan
+    Write-Host "       UVR Headless Runner - Windows Installation        " -ForegroundColor Cyan
+    Write-Host "=========================================================" -ForegroundColor Cyan
     Write-Host ""
+}
+
+function Get-CudaDriverRequirement {
+    param([string]$CudaVersion)
+    switch ($CudaVersion) {
+        "cu121" { return "530+" }
+        "cu124" { return "550+" }
+        "cu128" { return "560+" }
+        default { return "unknown" }
+    }
 }
 
 function Test-Docker {
     try {
         $null = docker info 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            return $false
+        }
         return $true
     } catch {
         return $false
@@ -54,34 +78,103 @@ function Test-Docker {
 
 function Test-GpuSupport {
     try {
-        $null = nvidia-smi 2>$null
-        if ($LASTEXITCODE -eq 0) {
-            # Try running a GPU container
-            $result = docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi 2>$null
-            if ($LASTEXITCODE -eq 0) {
-                return $true
-            }
+        # First check if nvidia-smi exists
+        $nvidiaSmi = Get-Command nvidia-smi -ErrorAction SilentlyContinue
+        if (-not $nvidiaSmi) {
+            Write-Info "nvidia-smi not found - GPU support unavailable"
+            return $false
         }
-    } catch {}
-    return $false
+        
+        $null = nvidia-smi 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Info "nvidia-smi failed - GPU may not be available"
+            return $false
+        }
+        
+        # Try running a GPU container
+        Write-Info "Testing Docker GPU support..."
+        $result = docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi 2>$null
+        if ($LASTEXITCODE -eq 0) {
+            return $true
+        }
+        
+        Write-Warn "Docker GPU test failed - falling back to CPU mode"
+        return $false
+    } catch {
+        Write-Warn "GPU detection error: $_"
+        return $false
+    }
+}
+
+# Convert Windows path to Docker-compatible path
+# Docker Desktop on Windows accepts paths like /c/Users/... or //c/Users/...
+function Convert-ToDockerPath {
+    param([string]$WindowsPath)
+    
+    if ([string]::IsNullOrEmpty($WindowsPath)) {
+        return $WindowsPath
+    }
+    
+    # Get absolute path
+    try {
+        $absPath = (Resolve-Path $WindowsPath -ErrorAction Stop).Path
+    } catch {
+        # Path doesn't exist yet, try to make it absolute anyway
+        $absPath = [System.IO.Path]::GetFullPath($WindowsPath)
+    }
+    
+    # Convert backslashes to forward slashes
+    $unixPath = $absPath -replace '\\', '/'
+    
+    # Convert drive letter: C:\... -> /c/...
+    # Docker Desktop on Windows expects lowercase drive letter
+    if ($unixPath -match '^([A-Za-z]):(.*)$') {
+        $driveLetter = $Matches[1].ToLower()
+        $pathRest = $Matches[2]
+        $unixPath = "/$driveLetter$pathRest"
+    }
+    
+    return $unixPath
 }
 
 # ------------------------------------------------------------------------------
 # Build Docker Image
 # ------------------------------------------------------------------------------
 function Build-Image {
-    param([string]$Target)
+    param(
+        [string]$Target,
+        [string]$CudaVersion
+    )
     
-    $Tag = "${ImageName}:${Target}"
+    if ($Target -eq "gpu") {
+        $Tag = "${ImageName}:gpu-${CudaVersion}"
+    } else {
+        $Tag = "${ImageName}:${Target}"
+    }
     
     Write-Info "Building Docker image: $Tag"
+    if ($Target -eq "gpu") {
+        Write-Info "CUDA version: $CudaVersion (requires driver $(Get-CudaDriverRequirement $CudaVersion))"
+    }
     Write-Info "This may take several minutes on first build..."
     
     Push-Location $ProjectRoot
     try {
-        docker build -t $Tag -f docker/Dockerfile --target $Target .
+        # Check if .dockerignore exists, if not create it
+        $dockerignorePath = Join-Path $ProjectRoot "docker\.dockerignore"
+        if (-not (Test-Path $dockerignorePath)) {
+            Write-Warn ".dockerignore not found - build context may be large"
+        }
+        
+        $buildArgs = @()
+        if ($Target -eq "gpu") {
+            $buildArgs += "--build-arg"
+            $buildArgs += "CUDA_VERSION=$CudaVersion"
+        }
+        
+        docker build -t $Tag -f docker/Dockerfile --target $Target @buildArgs .
         if ($LASTEXITCODE -ne 0) {
-            throw "Docker build failed"
+            throw "Docker build failed with exit code $LASTEXITCODE"
         }
         Write-Success "Image built successfully: $Tag"
     } finally {
@@ -96,49 +189,112 @@ function New-Wrapper {
     param(
         [string]$CmdName,
         [string]$RunnerScript,
-        [string]$Target
+        [string]$Target,
+        [string]$CudaVersion
     )
     
     $WrapperPath = Join-Path $InstallDir "$CmdName.cmd"
     $PsWrapperPath = Join-Path $InstallDir "$CmdName.ps1"
     
-    Write-Info "Creating wrapper: $CmdName"
+    # Determine image tag
+    if ($Target -eq "gpu") {
+        $ImageTag = "${ImageName}:gpu-${CudaVersion}"
+    } else {
+        $ImageTag = "${ImageName}:${Target}"
+    }
+    
+    Write-Info "Creating wrapper: $CmdName (image: $ImageTag)"
     
     # GPU flags
     $GpuFlags = if ($Target -eq "gpu") { "--gpus all" } else { "" }
     
-    # Create CMD wrapper
+    # Convert ModelsDir to Docker path
+    $ModelsDockerPath = Convert-ToDockerPath $ModelsDir
+    
+    # Create CMD wrapper (simple version - delegates to PowerShell for complex path handling)
     $CmdContent = @"
 @echo off
 REM ==============================================================================
 REM $CmdName - UVR Headless Runner CLI Wrapper
 REM ==============================================================================
+REM For complex paths with spaces or special characters, use the PowerShell wrapper:
+REM   powershell -ExecutionPolicy Bypass -File "%~dp0$CmdName.ps1" %*
+REM ==============================================================================
 setlocal enabledelayedexpansion
 
-set IMAGE=${ImageName}:${Target}
+set IMAGE=$ImageTag
 set MODELS_DIR=%UVR_MODELS_DIR%
 if "%MODELS_DIR%"=="" set MODELS_DIR=$ModelsDir
 
 REM Ensure models directory exists
 if not exist "%MODELS_DIR%" mkdir "%MODELS_DIR%"
 
-REM Run container
-docker run --rm -it $GpuFlags -v "%MODELS_DIR%:/models" -e "UVR_MODELS_DIR=/models" %IMAGE% $RunnerScript %*
+REM Build proxy arguments if set (auto-passthrough from host environment)
+set PROXY_ARGS=
+if defined HTTP_PROXY set PROXY_ARGS=%PROXY_ARGS% -e HTTP_PROXY=%HTTP_PROXY%
+if defined HTTPS_PROXY set PROXY_ARGS=%PROXY_ARGS% -e HTTPS_PROXY=%HTTPS_PROXY%
+if defined NO_PROXY set PROXY_ARGS=%PROXY_ARGS% -e NO_PROXY=%NO_PROXY%
+if defined http_proxy set PROXY_ARGS=%PROXY_ARGS% -e http_proxy=%http_proxy%
+if defined https_proxy set PROXY_ARGS=%PROXY_ARGS% -e https_proxy=%https_proxy%
+if defined no_proxy set PROXY_ARGS=%PROXY_ARGS% -e no_proxy=%no_proxy%
+
+REM Simple case: run container with basic arguments
+REM For complex paths, use PowerShell wrapper
+docker run --rm -it $GpuFlags -v "%MODELS_DIR%:/models" -e "UVR_MODELS_DIR=/models" %PROXY_ARGS% %IMAGE% $RunnerScript %*
 "@
     
-    # Create PowerShell wrapper
+    # Create PowerShell wrapper (handles complex paths properly)
     $PsContent = @"
 # ==============================================================================
 # $CmdName - UVR Headless Runner CLI Wrapper (PowerShell)
 # ==============================================================================
+# This wrapper handles Windows paths correctly for Docker
+# ==============================================================================
 
-`$Image = "${ImageName}:${Target}"
+`$ErrorActionPreference = "Continue"
+
+`$Image = "$ImageTag"
 `$ModelsDir = if (`$env:UVR_MODELS_DIR) { `$env:UVR_MODELS_DIR } else { "$ModelsDir" }
+
+# Function to convert Windows path to Docker path
+function Convert-ToDockerPath {
+    param([string]`$WindowsPath)
+    
+    if ([string]::IsNullOrEmpty(`$WindowsPath)) {
+        return `$WindowsPath
+    }
+    
+    # Get absolute path
+    try {
+        if (Test-Path `$WindowsPath) {
+            `$absPath = (Resolve-Path `$WindowsPath).Path
+        } else {
+            `$absPath = [System.IO.Path]::GetFullPath(`$WindowsPath)
+        }
+    } catch {
+        `$absPath = `$WindowsPath
+    }
+    
+    # Convert backslashes to forward slashes
+    `$unixPath = `$absPath -replace '\\\\', '/'
+    
+    # Convert drive letter: C:\... -> /c/...
+    if (`$unixPath -match '^([A-Za-z]):(.*)$') {
+        `$driveLetter = `$Matches[1].ToLower()
+        `$pathRest = `$Matches[2]
+        `$unixPath = "/`$driveLetter`$pathRest"
+    }
+    
+    return `$unixPath
+}
 
 # Ensure models directory exists
 if (-not (Test-Path `$ModelsDir)) {
     New-Item -ItemType Directory -Path `$ModelsDir -Force | Out-Null
 }
+
+# Convert models directory to Docker path
+`$ModelsDockerPath = Convert-ToDockerPath `$ModelsDir
 
 # Process arguments for path mounting
 `$MountArgs = @()
@@ -153,18 +309,22 @@ for (`$i = 0; `$i -lt `$args.Count; `$i++) {
         `$i++
         if (`$i -lt `$args.Count) {
             `$path = `$args[`$i]
-            `$absPath = (Resolve-Path `$path -ErrorAction SilentlyContinue).Path
-            if (`$absPath) {
+            
+            # Resolve and convert path
+            if (Test-Path `$path) {
+                `$absPath = (Resolve-Path `$path).Path
                 `$dir = Split-Path `$absPath -Parent
-                `$unixPath = `$absPath -replace '\\', '/' -replace '^([A-Za-z]):', '/`$1'
-                `$unixDir = `$dir -replace '\\', '/' -replace '^([A-Za-z]):', '/`$1'
+                `$dockerPath = Convert-ToDockerPath `$absPath
+                `$dockerDir = Convert-ToDockerPath `$dir
+                
                 if (-not `$MountedDirs.ContainsKey(`$dir)) {
                     `$MountedDirs[`$dir] = `$true
                     `$MountArgs += "-v"
-                    `$MountArgs += "`${dir}:`${unixDir}:ro"
+                    `$MountArgs += "`"`$(`$dir):`$(`$dockerDir):ro`""
                 }
-                `$ProcessedArgs += `$unixPath
+                `$ProcessedArgs += `$dockerPath
             } else {
+                Write-Warning "Input file not found: `$path"
                 `$ProcessedArgs += `$path
             }
         }
@@ -174,17 +334,29 @@ for (`$i = 0; `$i -lt `$args.Count; `$i++) {
         `$i++
         if (`$i -lt `$args.Count) {
             `$path = `$args[`$i]
+            
+            # Create output directory if it doesn't exist
             if (-not (Test-Path `$path)) {
-                New-Item -ItemType Directory -Path `$path -Force | Out-Null
+                try {
+                    New-Item -ItemType Directory -Path `$path -Force | Out-Null
+                } catch {
+                    Write-Warning "Cannot create output directory: `$path"
+                }
             }
-            `$absPath = (Resolve-Path `$path).Path
-            `$unixPath = `$absPath -replace '\\', '/' -replace '^([A-Za-z]):', '/`$1'
-            if (-not `$MountedDirs.ContainsKey(`$absPath)) {
-                `$MountedDirs[`$absPath] = `$true
-                `$MountArgs += "-v"
-                `$MountArgs += "`${absPath}:`${unixPath}:rw"
+            
+            if (Test-Path `$path) {
+                `$absPath = (Resolve-Path `$path).Path
+                `$dockerPath = Convert-ToDockerPath `$absPath
+                
+                if (-not `$MountedDirs.ContainsKey(`$absPath)) {
+                    `$MountedDirs[`$absPath] = `$true
+                    `$MountArgs += "-v"
+                    `$MountArgs += "`"`$(`$absPath):`$(`$dockerPath):rw`""
+                }
+                `$ProcessedArgs += `$dockerPath
+            } else {
+                `$ProcessedArgs += `$path
             }
-            `$ProcessedArgs += `$unixPath
         }
     }
     else {
@@ -193,33 +365,59 @@ for (`$i = 0; `$i -lt `$args.Count; `$i++) {
 }
 
 # Build docker command
-# Use -it only if running in a terminal
-`$IsInteractive = [Environment]::UserInteractive -and -not [Console]::IsInputRedirected
-if (`$IsInteractive) {
-    `$DockerArgs = @("run", "--rm", "-it")
-} else {
-    `$DockerArgs = @("run", "--rm")
+`$DockerArgs = @("run", "--rm")
+
+# Add -it only if running interactively in a terminal
+if ([Environment]::UserInteractive -and `$Host.Name -eq 'ConsoleHost') {
+    `$DockerArgs += "-it"
 }
+
+# Add GPU flags if needed
 `$GpuEnabled = "$($Target -eq 'gpu')"
 if (`$GpuEnabled -eq "True") {
     `$DockerArgs += "--gpus"
     `$DockerArgs += "all"
 }
+
+# Add models volume
 `$DockerArgs += "-v"
-`$DockerArgs += "`${ModelsDir}:/models"
+`$DockerArgs += "`"`$(`$ModelsDir):`$(`$ModelsDockerPath)`""
+
+# Add mounted directories
 `$DockerArgs += `$MountArgs
+
+# Add environment variable
 `$DockerArgs += "-e"
 `$DockerArgs += "UVR_MODELS_DIR=/models"
+
+# HTTP/HTTPS Proxy passthrough
+# Automatically passes proxy settings from host to container if set
+# SECURITY: Values are passed but not logged (may contain credentials)
+if (`$env:HTTP_PROXY) { `$DockerArgs += "-e"; `$DockerArgs += "HTTP_PROXY=`$(`$env:HTTP_PROXY)" }
+if (`$env:HTTPS_PROXY) { `$DockerArgs += "-e"; `$DockerArgs += "HTTPS_PROXY=`$(`$env:HTTPS_PROXY)" }
+if (`$env:NO_PROXY) { `$DockerArgs += "-e"; `$DockerArgs += "NO_PROXY=`$(`$env:NO_PROXY)" }
+if (`$env:http_proxy) { `$DockerArgs += "-e"; `$DockerArgs += "http_proxy=`$(`$env:http_proxy)" }
+if (`$env:https_proxy) { `$DockerArgs += "-e"; `$DockerArgs += "https_proxy=`$(`$env:https_proxy)" }
+if (`$env:no_proxy) { `$DockerArgs += "-e"; `$DockerArgs += "no_proxy=`$(`$env:no_proxy)" }
+
+# Add image and command
 `$DockerArgs += `$Image
 `$DockerArgs += "$RunnerScript"
 `$DockerArgs += `$ProcessedArgs
 
+# Show command in verbose mode (proxy vars intentionally excluded for security)
+if (`$env:UVR_DEBUG) {
+    Write-Host "Docker command: docker `$(`$DockerArgs -join ' ')" -ForegroundColor Gray
+}
+
+# Execute docker
 & docker @DockerArgs
+exit `$LASTEXITCODE
 "@
     
-    # Write wrappers
-    $CmdContent | Out-File -FilePath $WrapperPath -Encoding ASCII
-    $PsContent | Out-File -FilePath $PsWrapperPath -Encoding UTF8
+    # Write wrappers with correct encoding
+    [System.IO.File]::WriteAllText($WrapperPath, $CmdContent, [System.Text.Encoding]::ASCII)
+    [System.IO.File]::WriteAllText($PsWrapperPath, $PsContent, [System.Text.UTF8Encoding]::new($false))
     
     Write-Success "Installed: $WrapperPath"
 }
@@ -251,71 +449,101 @@ function Uninstall-Wrappers {
     Write-Host "Note: Docker images and model cache were not removed."
     Write-Host ""
     Write-Host "To remove Docker images:"
-    Write-Host "  docker rmi ${ImageName}:gpu ${ImageName}:cpu"
+    Write-Host "  docker rmi ${ImageName}:gpu-cu124 ${ImageName}:cpu"
     Write-Host ""
     Write-Host "To remove model cache:"
-    Write-Host "  Remove-Item -Recurse -Force $ModelsDir"
+    Write-Host "  Remove-Item -Recurse -Force `"$ModelsDir`""
 }
 
 # ------------------------------------------------------------------------------
 # Main Installation
 # ------------------------------------------------------------------------------
 function Install-UVR {
-    param([string]$Target)
+    param(
+        [string]$Target,
+        [string]$CudaVersion
+    )
     
     Show-Banner
     
     # Check Docker
     if (-not (Test-Docker)) {
         Write-Error "Docker is not installed or not running."
-        Write-Host "Please install Docker Desktop: https://docs.docker.com/desktop/install/windows-install/"
+        Write-Host ""
+        Write-Host "Please install Docker Desktop:" -ForegroundColor Yellow
+        Write-Host "  https://docs.docker.com/desktop/install/windows-install/"
+        Write-Host ""
+        Write-Host "After installation, make sure Docker Desktop is running."
         exit 1
     }
+    
+    Write-Success "Docker is available"
     
     # Auto-detect GPU
     if (-not $Target) {
         Write-Info "Auto-detecting GPU support..."
         if (Test-GpuSupport) {
             $Target = "gpu"
-            Write-Info "Detected: GPU support available"
+            Write-Success "GPU support detected!"
         } else {
             $Target = "cpu"
-            Write-Info "Detected: CPU mode (no GPU support found)"
+            Write-Info "Using CPU mode (no GPU support found)"
         }
     }
     
+    Write-Host ""
+    Write-Host "Installation mode: $Target" -ForegroundColor Cyan
+    if ($Target -eq "gpu") {
+        Write-Host "CUDA version: $CudaVersion (requires driver $(Get-CudaDriverRequirement $CudaVersion))" -ForegroundColor Cyan
+    }
+    Write-Host ""
+    
     # Create directories
     Write-Info "Creating directories..."
-    New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
-    New-Item -ItemType Directory -Path $ModelsDir -Force | Out-Null
-    New-Item -ItemType Directory -Path "$ModelsDir\VR_Models" -Force | Out-Null
-    New-Item -ItemType Directory -Path "$ModelsDir\MDX_Net_Models" -Force | Out-Null
-    New-Item -ItemType Directory -Path "$ModelsDir\Demucs_Models" -Force | Out-Null
+    try {
+        New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
+        New-Item -ItemType Directory -Path $ModelsDir -Force | Out-Null
+        New-Item -ItemType Directory -Path "$ModelsDir\VR_Models" -Force | Out-Null
+        New-Item -ItemType Directory -Path "$ModelsDir\MDX_Net_Models" -Force | Out-Null
+        New-Item -ItemType Directory -Path "$ModelsDir\Demucs_Models" -Force | Out-Null
+        Write-Success "Directories created"
+    } catch {
+        Write-Error "Failed to create directories: $_"
+        exit 1
+    }
     
     # Build Docker image
-    Build-Image -Target $Target
+    Build-Image -Target $Target -CudaVersion $CudaVersion
     
     # Create wrappers
     Write-Info "Installing CLI wrappers to $InstallDir..."
     
-    New-Wrapper -CmdName "uvr-mdx" -RunnerScript "uvr-mdx" -Target $Target
-    New-Wrapper -CmdName "uvr-demucs" -RunnerScript "uvr-demucs" -Target $Target
-    New-Wrapper -CmdName "uvr-vr" -RunnerScript "uvr-vr" -Target $Target
-    New-Wrapper -CmdName "uvr" -RunnerScript "uvr" -Target $Target
+    New-Wrapper -CmdName "uvr-mdx" -RunnerScript "uvr-mdx" -Target $Target -CudaVersion $CudaVersion
+    New-Wrapper -CmdName "uvr-demucs" -RunnerScript "uvr-demucs" -Target $Target -CudaVersion $CudaVersion
+    New-Wrapper -CmdName "uvr-vr" -RunnerScript "uvr-vr" -Target $Target -CudaVersion $CudaVersion
+    New-Wrapper -CmdName "uvr" -RunnerScript "uvr" -Target $Target -CudaVersion $CudaVersion
     
     # Add to PATH if not already
     $CurrentPath = [Environment]::GetEnvironmentVariable("Path", "User")
     if ($CurrentPath -notlike "*$InstallDir*") {
         Write-Info "Adding $InstallDir to PATH..."
-        [Environment]::SetEnvironmentVariable("Path", "$CurrentPath;$InstallDir", "User")
-        $env:Path = "$env:Path;$InstallDir"
+        try {
+            [Environment]::SetEnvironmentVariable("Path", "$CurrentPath;$InstallDir", "User")
+            $env:Path = "$env:Path;$InstallDir"
+            Write-Success "PATH updated"
+        } catch {
+            Write-Warn "Could not update PATH automatically. Please add manually:"
+            Write-Host "  $InstallDir"
+        }
     }
     
     # Success message
     Write-Host ""
-    Write-Success "Installation complete!"
+    Write-Host "=========================================================" -ForegroundColor Green
+    Write-Host "            Installation Complete!                       " -ForegroundColor Green
+    Write-Host "=========================================================" -ForegroundColor Green
     Write-Host ""
-    Write-Host "You can now use these commands:" -ForegroundColor Green
+    Write-Host "You can now use these commands:" -ForegroundColor Cyan
     Write-Host ""
     Write-Host '  uvr-mdx -m "UVR-MDX-NET Inst HQ 3" -i song.wav -o output/'
     Write-Host '  uvr-demucs -m htdemucs -i song.wav -o output/'
@@ -329,7 +557,14 @@ function Install-UVR {
     Write-Host ""
     
     if ($Target -eq "gpu") {
-        Write-Host "GPU acceleration is enabled!" -ForegroundColor Green
+        Write-Host "GPU acceleration is enabled! (CUDA $CudaVersion)" -ForegroundColor Green
+        Write-Host ""
+        Write-Host "CUDA compatibility:" -ForegroundColor Cyan
+        switch ($CudaVersion) {
+            "cu121" { Write-Host "  CUDA 12.1 - requires NVIDIA driver 530+" }
+            "cu124" { Write-Host "  CUDA 12.4 - requires NVIDIA driver 550+" }
+            "cu128" { Write-Host "  CUDA 12.8 - requires NVIDIA driver 560+" }
+        }
     } else {
         Write-Host "Running in CPU mode." -ForegroundColor Yellow
         Write-Host "For GPU support, ensure NVIDIA drivers and Docker GPU support are configured."
@@ -337,6 +572,9 @@ function Install-UVR {
     
     Write-Host ""
     Write-Host "NOTE: You may need to restart your terminal for PATH changes to take effect." -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "For complex paths with spaces, use the PowerShell wrappers:" -ForegroundColor Gray
+    Write-Host "  powershell -File `"$InstallDir\uvr-mdx.ps1`" ..." -ForegroundColor Gray
 }
 
 # ------------------------------------------------------------------------------
@@ -347,14 +585,35 @@ if ($Help) {
     Write-Host "Usage: .\install.ps1 [OPTIONS]"
     Write-Host ""
     Write-Host "Options:"
-    Write-Host "  -Cpu        Force CPU-only installation"
-    Write-Host "  -Gpu        Force GPU installation"
-    Write-Host "  -Uninstall  Remove installed CLI wrappers"
-    Write-Host "  -Help       Show this help message"
+    Write-Host "  -Cpu           Force CPU-only installation"
+    Write-Host "  -Gpu           Force GPU installation (uses default CUDA version)"
+    Write-Host "  -Cuda VERSION  GPU installation with specific CUDA version"
+    Write-Host "                 VERSION: cu121, cu124 (default), cu128"
+    Write-Host "  -Uninstall     Remove installed CLI wrappers"
+    Write-Host "  -Help          Show this help message"
+    Write-Host ""
+    Write-Host "CUDA Versions:"
+    Write-Host "  cu121 - CUDA 12.1, requires NVIDIA driver 530+"
+    Write-Host "  cu124 - CUDA 12.4, requires NVIDIA driver 550+ (default)"
+    Write-Host "  cu128 - CUDA 12.8, requires NVIDIA driver 560+"
     Write-Host ""
     Write-Host "Environment Variables:"
-    Write-Host "  UVR_INSTALL_DIR   Installation directory (default: %LOCALAPPDATA%\UVR)"
-    Write-Host "  UVR_MODELS_DIR    Model cache directory (default: %USERPROFILE%\.uvr_models)"
+    Write-Host "  UVR_INSTALL_DIR    Installation directory (default: %LOCALAPPDATA%\UVR)"
+    Write-Host "  UVR_MODELS_DIR     Model cache directory (default: %USERPROFILE%\.uvr_models)"
+    Write-Host "  UVR_CUDA_VERSION   CUDA version (default: cu124)"
+    Write-Host "  UVR_DEBUG          Set to 1 to show debug output"
+    Write-Host ""
+    Write-Host "Proxy Support (auto-passthrough if set):"
+    Write-Host "  HTTP_PROXY         HTTP proxy URL (e.g., http://proxy:8080)"
+    Write-Host "  HTTPS_PROXY        HTTPS proxy URL"
+    Write-Host "  NO_PROXY           Comma-separated list of hosts to bypass proxy"
+    Write-Host ""
+    Write-Host "Examples:"
+    Write-Host "  # Install GPU with CUDA 12.1 (for older drivers)"
+    Write-Host "  .\install.ps1 -Cuda cu121"
+    Write-Host ""
+    Write-Host "  # Install GPU with CUDA 12.4 (recommended)"
+    Write-Host "  .\install.ps1 -Gpu"
     exit 0
 }
 
@@ -363,8 +622,19 @@ if ($Uninstall) {
     exit 0
 }
 
+# Determine target and CUDA version
 $Target = $null
-if ($Cpu) { $Target = "cpu" }
-if ($Gpu) { $Target = "gpu" }
+$CudaVersion = $DefaultCudaVersion
 
-Install-UVR -Target $Target
+if ($Cpu) { 
+    $Target = "cpu" 
+}
+if ($Gpu) { 
+    $Target = "gpu" 
+}
+if ($Cuda) {
+    $Target = "gpu"
+    $CudaVersion = $Cuda
+}
+
+Install-UVR -Target $Target -CudaVersion $CudaVersion

@@ -1,0 +1,52 @@
+# ==============================================================================
+# Git Attributes - Line Ending Configuration
+# ==============================================================================
+# Ensures shell scripts always use LF line endings (Unix-style)
+# This prevents "bad interpreter" errors on Windows checkouts
+# ==============================================================================
+
+# Default behavior: auto-detect text files and normalize line endings
+* text=auto
+
+# Shell scripts MUST use LF line endings (Unix-style)
+*.sh text eol=lf
+docker/bin/* text eol=lf
+docker/entrypoint.sh text eol=lf
+
+# Batch/PowerShell scripts can use CRLF (Windows-style)
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Python files use LF
+*.py text eol=lf
+
+# Configuration files use LF
+*.yml text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+*.toml text eol=lf
+Dockerfile text eol=lf
+.dockerignore text eol=lf
+
+# Markdown files
+*.md text eol=lf
+
+# Binary files - do not modify
+*.pth binary
+*.onnx binary
+*.ckpt binary
+*.th binary
+*.gz binary
+*.wav binary
+*.mp3 binary
+*.flac binary
+*.ogg binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.ttf binary
+*.woff binary
+*.woff2 binary

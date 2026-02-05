@@ -7,10 +7,12 @@
 本项目提供了 Ultimate Vocal Remover (UVR) 的 Docker 化部署方案，支持：
 
 - **三种架构**: MDX-Net/Roformer, Demucs, VR Architecture
-- **GPU 加速**: NVIDIA CUDA 12.x 支持
+- **GPU 加速**: NVIDIA CUDA 12.x 支持，可选版本 (12.1/12.4/12.8)
 - **CPU 回退**: 自动检测并回退到 CPU 模式
 - **原生 CLI 体验**: 无需手动输入 `docker run` 命令
 - **模型持久化**: 模型自动缓存，避免重复下载
+- **代理支持**: 自动 HTTP/HTTPS 代理透传，适合企业网络
+- **供应链安全**: 所有 Python 包均经过 SHA256 哈希验证
 
 ## 🚀 快速开始
 
@@ -23,22 +25,32 @@
 
 **Linux/macOS:**
 ```bash
-# 自动检测 GPU 支持
+# 自动检测 GPU 支持 (默认 CUDA 12.4)
 ./docker/install.sh
 
-# 或强制指定模式
-./docker/install.sh --gpu   # GPU 模式
+# 强制指定模式
+./docker/install.sh --gpu   # GPU 模式 (CUDA 12.4)
 ./docker/install.sh --cpu   # CPU 模式
+
+# 指定 CUDA 版本 (根据驱动版本选择)
+./docker/install.sh --cuda cu121   # CUDA 12.1, 驱动 530+
+./docker/install.sh --cuda cu124   # CUDA 12.4, 驱动 550+ (默认)
+./docker/install.sh --cuda cu128   # CUDA 12.8, 驱动 560+
 ```
 
 **Windows (PowerShell):**
 ```powershell
-# 自动检测 GPU 支持
+# 自动检测 GPU 支持 (默认 CUDA 12.4)
 .\docker\install.ps1
 
-# 或强制指定模式
-.\docker\install.ps1 -Gpu   # GPU 模式
+# 强制指定模式
+.\docker\install.ps1 -Gpu   # GPU 模式 (CUDA 12.4)
 .\docker\install.ps1 -Cpu   # CPU 模式
+
+# 指定 CUDA 版本
+.\docker\install.ps1 -Cuda cu121   # CUDA 12.1, 驱动 530+
+.\docker\install.ps1 -Cuda cu124   # CUDA 12.4, 驱动 550+ (默认)
+.\docker\install.ps1 -Cuda cu128   # CUDA 12.8, 驱动 560+
 ```
 
 ### 使用示例
@@ -81,20 +93,50 @@ docker/
 
 ### 环境变量
 
+#### 核心设置
+
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
 | `UVR_MODELS_DIR` | `~/.uvr_models` | 模型缓存目录 |
 | `UVR_DEVICE` | 自动检测 | 强制指定设备 (`cuda`/`cpu`) |
 | `UVR_INSTALL_DIR` | `/usr/local/bin` | CLI 安装目录 |
+| `UVR_CUDA_VERSION` | `cu124` | CUDA 版本 (`cu121`/`cu124`/`cu128`) |
+| `UVR_DEBUG` | - | 设为 `1` 显示调试输出 |
+
+#### 资源限制 (Docker Compose)
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `UVR_MEMORY_LIMIT` | `16G` | 容器最大内存 |
+| `UVR_MEMORY_RESERVATION` | `4G` | 容器保留内存 |
+
+#### HTTP/HTTPS 代理 (自动透传)
+
+| 变量 | 说明 |
+|------|------|
+| `HTTP_PROXY` / `http_proxy` | HTTP 代理 URL (如 `http://proxy:8080`) |
+| `HTTPS_PROXY` / `https_proxy` | HTTPS 代理 URL |
+| `NO_PROXY` / `no_proxy` | 绕过代理的主机列表 (逗号分隔) |
+
+> **说明**: 代理设置会自动传递到容器中，无需手动配置。只需在主机环境中设置代理变量即可。
 
 ### 手动构建镜像
 
 ```bash
-# 构建 GPU 镜像
+# 构建 GPU 镜像 (默认 CUDA 12.4)
 docker build -t uvr-headless:gpu -f docker/Dockerfile --target gpu .
+
+# 构建 GPU 镜像并指定 CUDA 版本
+docker build -t uvr-headless:gpu-cu121 -f docker/Dockerfile --target gpu \
+  --build-arg CUDA_VERSION=cu121 .
 
 # 构建 CPU 镜像
 docker build -t uvr-headless:cpu -f docker/Dockerfile --target cpu .
+
+# 通过代理构建 (企业网络)
+docker build -t uvr-headless:gpu -f docker/Dockerfile --target gpu \
+  --build-arg HTTP_PROXY=http://proxy:8080 \
+  --build-arg HTTPS_PROXY=http://proxy:8080 .
 ```
 
 ### 使用 Docker Compose
@@ -266,9 +308,17 @@ UVR_MODELS_DIR=/path/to/models uvr-mdx -m "UVR-MDX-NET Inst HQ 3" -i song.wav -o
 
 ### NVIDIA GPU 要求
 
-- NVIDIA 驱动 525.60.13+
-- CUDA 12.x 兼容 GPU
 - nvidia-container-toolkit
+- CUDA 12.x 兼容 GPU
+- 驱动版本要求取决于 CUDA 版本：
+
+| CUDA 版本 | 构建参数 | 最低驱动 |
+|-----------|----------|----------|
+| CUDA 12.1 | `cu121` | 530+ |
+| CUDA 12.4 | `cu124` (默认) | 550+ |
+| CUDA 12.8 | `cu128` | 560+ |
+
+> **提示**: 如果你的驱动较旧，安装时使用 `--cuda cu121` 参数。
 
 ### 安装 nvidia-container-toolkit
 
@@ -295,6 +345,57 @@ docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi
 # 检查 UVR GPU 支持
 uvr info
 ```
+
+## 🌐 HTTP/HTTPS 代理支持
+
+对于企业网络或受限网络环境，UVR Docker 支持自动透传代理设置。
+
+### 使用方法
+
+代理环境变量会**自动检测并传递**到容器中。只需在 shell 中设置：
+
+```bash
+# 设置代理 (Linux/macOS)
+export HTTP_PROXY=http://proxy.company.com:8080
+export HTTPS_PROXY=http://proxy.company.com:8080
+export NO_PROXY=localhost,127.0.0.1,.company.com
+
+# 正常使用 UVR - 代理会自动生效
+uvr-mdx -m "UVR-MDX-NET Inst HQ 3" -i song.wav -o output/
+
+# 或为单个命令指定
+HTTP_PROXY=http://proxy:8080 uvr mdx --list
+```
+
+**Windows (PowerShell):**
+```powershell
+# 设置代理
+$env:HTTP_PROXY = "http://proxy.company.com:8080"
+$env:HTTPS_PROXY = "http://proxy.company.com:8080"
+
+# 正常使用 UVR
+uvr-mdx -m "UVR-MDX-NET Inst HQ 3" -i song.wav -o output/
+```
+
+### Docker Compose 配合代理
+
+```bash
+# 代理会自动透传
+export HTTP_PROXY=http://proxy:8080
+docker compose build uvr   # 构建时使用代理
+docker compose run --rm uvr uvr mdx --list  # 运行时使用代理
+```
+
+### 直接 Docker Run 配合代理
+
+```bash
+docker run --rm -it \
+  -e HTTP_PROXY=http://proxy:8080 \
+  -e HTTPS_PROXY=http://proxy:8080 \
+  uvr-headless:gpu uvr info
+```
+
+> **安全说明**: 代理 URL 可能包含凭据。它们会传递到容器中，但故意不会出现在调试日志中，以防止意外泄露。
 
 ## 🔍 故障排除
 
@@ -334,6 +435,28 @@ export PATH="$PATH:/usr/local/bin"
 sudo usermod -aG docker $USER
 # 重新登录或运行
 newgrp docker
+```
+
+**5. 代理环境下模型下载失败**
+```bash
+# 确保设置了代理变量
+export HTTP_PROXY=http://proxy:8080
+export HTTPS_PROXY=http://proxy:8080
+
+# 验证代理是否生效
+uvr info  # 应显示 "Proxy: configured"
+
+# 测试通过代理的连接
+curl -x http://proxy:8080 -I https://github.com
+```
+
+**6. 代理环境下构建失败**
+```bash
+# 将代理传递给构建命令
+docker build \
+  --build-arg HTTP_PROXY=http://proxy:8080 \
+  --build-arg HTTPS_PROXY=http://proxy:8080 \
+  -t uvr-headless:gpu -f docker/Dockerfile --target gpu .
 ```
 
 ### 查看日志

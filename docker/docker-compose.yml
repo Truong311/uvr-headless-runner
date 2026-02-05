@@ -3,17 +3,32 @@
 # ==============================================================================
 # 
 # Usage:
-#   # GPU mode (default)
+#   # GPU mode (default, CUDA 12.4)
 #   docker compose up -d
 #   docker compose run --rm uvr uvr-mdx -m "UVR-MDX-NET Inst HQ 3" -i /input/song.wav -o /output/
+#
+#   # GPU mode with specific CUDA version
+#   CUDA_VERSION=cu121 docker compose build uvr
+#   CUDA_VERSION=cu128 docker compose build uvr
 #
 #   # CPU mode
 #   docker compose --profile cpu up -d
 #   docker compose run --rm uvr-cpu uvr-mdx -m "UVR-MDX-NET Inst HQ 3" -i /input/song.wav -o /output/
 #
+# CUDA Version Options (set CUDA_VERSION env var before building):
+#   cu121 - CUDA 12.1, requires driver 530+
+#   cu124 - CUDA 12.4, requires driver 550+ (default, recommended)
+#   cu128 - CUDA 12.8, requires driver 560+
+#
+# HTTP/HTTPS Proxy Support:
+#   Proxy settings are automatically passed through if set in your environment.
+#   Build-time (for pip installs):
+#     HTTP_PROXY=http://proxy:port docker compose build uvr
+#   Runtime (for model downloads):
+#     HTTP_PROXY=http://proxy:port docker compose run --rm uvr ...
+#   Or export them in your shell before running docker compose commands.
+#
 # ==============================================================================
-
-version: "3.8"
 
 services:
   # ============================================================================
@@ -24,34 +39,58 @@ services:
       context: ..
       dockerfile: docker/Dockerfile
       target: gpu
-    image: uvr-headless:gpu
+      args:
+        # CUDA version for PyTorch (cu121, cu124, cu128)
+        # Default: cu124 for best compatibility
+        CUDA_VERSION: ${CUDA_VERSION:-cu124}
+        # Proxy settings for build-time pip installs (auto-passthrough from host)
+        HTTP_PROXY: ${HTTP_PROXY:-}
+        HTTPS_PROXY: ${HTTPS_PROXY:-}
+        NO_PROXY: ${NO_PROXY:-}
+        http_proxy: ${http_proxy:-}
+        https_proxy: ${https_proxy:-}
+        no_proxy: ${no_proxy:-}
+    image: uvr-headless:gpu-${CUDA_VERSION:-cu124}
     container_name: uvr-headless-gpu
     
-    # NVIDIA GPU support
+    # NVIDIA GPU support with resource limits
     deploy:
       resources:
+        # Memory limits to prevent OOM crashes
+        # Adjust based on your system - 16GB recommended for large models
+        limits:
+          memory: ${UVR_MEMORY_LIMIT:-16G}
         reservations:
+          memory: ${UVR_MEMORY_RESERVATION:-4G}
           devices:
             - driver: nvidia
               count: all
               capabilities: [gpu]
     
     # Environment
+    # Proxy variables are passed through automatically if set in host environment
     environment:
       - UVR_DEVICE=cuda
       - UVR_MODELS_DIR=/models
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      # HTTP/HTTPS Proxy passthrough (runtime, for model downloads)
+      # These use the empty-default syntax to only set if host has them defined
+      - HTTP_PROXY=${HTTP_PROXY:-}
+      - HTTPS_PROXY=${HTTPS_PROXY:-}
+      - NO_PROXY=${NO_PROXY:-}
+      - http_proxy=${http_proxy:-}
+      - https_proxy=${https_proxy:-}
+      - no_proxy=${no_proxy:-}
     
     # Volumes
     volumes:
       # Model cache (persistent)
       - uvr-models:/models
       # Input/Output directories (bind mount your local directories)
+      # Use absolute paths or environment variables
       - ${UVR_INPUT_DIR:-./input}:/input:ro
       - ${UVR_OUTPUT_DIR:-./output}:/output
-      # Optional: Mount specific model files
-      # - /path/to/your/models:/models:ro
     
     # Working directory
     working_dir: /app
@@ -62,6 +101,14 @@ services:
     
     # Restart policy
     restart: "no"
+    
+    # Health check
+    healthcheck:
+      test: ["CMD", "python", "-c", "import torch; print(f'CUDA: {torch.cuda.is_available()}')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
 
   # ============================================================================
   # CPU Service (Alternative)
@@ -71,15 +118,39 @@ services:
       context: ..
       dockerfile: docker/Dockerfile
       target: cpu
+      args:
+        # Proxy settings for build-time pip installs (auto-passthrough from host)
+        HTTP_PROXY: ${HTTP_PROXY:-}
+        HTTPS_PROXY: ${HTTPS_PROXY:-}
+        NO_PROXY: ${NO_PROXY:-}
+        http_proxy: ${http_proxy:-}
+        https_proxy: ${https_proxy:-}
+        no_proxy: ${no_proxy:-}
     image: uvr-headless:cpu
     container_name: uvr-headless-cpu
     profiles:
       - cpu
     
+    # Resource limits for CPU mode
+    deploy:
+      resources:
+        limits:
+          memory: ${UVR_MEMORY_LIMIT:-16G}
+        reservations:
+          memory: ${UVR_MEMORY_RESERVATION:-4G}
+    
     # Environment
+    # Proxy variables are passed through automatically if set in host environment
     environment:
       - UVR_DEVICE=cpu
       - UVR_MODELS_DIR=/models
+      # HTTP/HTTPS Proxy passthrough (runtime, for model downloads)
+      - HTTP_PROXY=${HTTP_PROXY:-}
+      - HTTPS_PROXY=${HTTPS_PROXY:-}
+      - NO_PROXY=${NO_PROXY:-}
+      - http_proxy=${http_proxy:-}
+      - https_proxy=${https_proxy:-}
+      - no_proxy=${no_proxy:-}
     
     # Volumes
     volumes:
@@ -91,6 +162,14 @@ services:
     stdin_open: true
     tty: true
     restart: "no"
+    
+    # Health check
+    healthcheck:
+      test: ["CMD", "python", "-c", "import torch; print('OK')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
 
 # ==============================================================================
 # Volumes

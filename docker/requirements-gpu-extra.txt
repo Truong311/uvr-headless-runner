@@ -1,0 +1,15 @@
+# =============================================================================
+# UVR Headless Runner - GPU Extra Requirements
+# =============================================================================
+# AUTO-GENERATED - Contains GPU-specific packages with SHA256 hashes.
+#
+# SECURITY: These packages replace their CPU equivalents for GPU acceleration.
+# Hashes ensure package integrity - if tampered, pip will refuse to install.
+#
+# NOTE: onnxruntime-gpu replaces onnxruntime (CPU) from the main requirements.
+# =============================================================================
+
+# GPU ONNX Runtime - replaces onnxruntime==1.16.3 from main requirements
+# Hashes fetched from PyPI for Linux x86_64 cp39
+onnxruntime-gpu==1.16.3 \
+    --hash=sha256:9305c7fc5981d7e04ad2afef1a403475fb84d658898567c91aa5a41c20ead356

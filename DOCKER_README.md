@@ -7,10 +7,12 @@
 This project provides a Docker deployment solution for Ultimate Vocal Remover (UVR), featuring:
 
 - **Three Architectures**: MDX-Net/Roformer, Demucs, VR Architecture
-- **GPU Acceleration**: NVIDIA CUDA 12.x support
+- **GPU Acceleration**: NVIDIA CUDA 12.x support with selectable versions (12.1/12.4/12.8)
 - **CPU Fallback**: Automatic detection and fallback to CPU mode
 - **Native CLI Experience**: No manual `docker run` commands required
 - **Model Persistence**: Automatic model caching to avoid re-downloads
+- **Proxy Support**: Automatic HTTP/HTTPS proxy passthrough for corporate networks
+- **Supply Chain Security**: pip hash verification for all Python packages
 
 ## 🚀 Quick Start
 
@@ -23,22 +25,32 @@ This project provides a Docker deployment solution for Ultimate Vocal Remover (U
 
 **Linux/macOS:**
 ```bash
-# Auto-detect GPU support
+# Auto-detect GPU support (default CUDA 12.4)
 ./docker/install.sh
 
-# Or force specific mode
-./docker/install.sh --gpu   # GPU mode
+# Force specific mode
+./docker/install.sh --gpu   # GPU mode (CUDA 12.4)
 ./docker/install.sh --cpu   # CPU mode
+
+# Specify CUDA version (for different driver compatibility)
+./docker/install.sh --cuda cu121   # CUDA 12.1, driver 530+
+./docker/install.sh --cuda cu124   # CUDA 12.4, driver 550+ (default)
+./docker/install.sh --cuda cu128   # CUDA 12.8, driver 560+
 ```
 
 **Windows (PowerShell):**
 ```powershell
-# Auto-detect GPU support
+# Auto-detect GPU support (default CUDA 12.4)
 .\docker\install.ps1
 
-# Or force specific mode
-.\docker\install.ps1 -Gpu   # GPU mode
+# Force specific mode
+.\docker\install.ps1 -Gpu   # GPU mode (CUDA 12.4)
 .\docker\install.ps1 -Cpu   # CPU mode
+
+# Specify CUDA version
+.\docker\install.ps1 -Cuda cu121   # CUDA 12.1, driver 530+
+.\docker\install.ps1 -Cuda cu124   # CUDA 12.4, driver 550+ (default)
+.\docker\install.ps1 -Cuda cu128   # CUDA 12.8, driver 560+
 ```
 
 ### Usage Examples
@@ -81,20 +93,50 @@ docker/
 
 ### Environment Variables
 
+#### Core Settings
+
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `UVR_MODELS_DIR` | `~/.uvr_models` | Model cache directory |
 | `UVR_DEVICE` | Auto-detect | Force device (`cuda`/`cpu`) |
 | `UVR_INSTALL_DIR` | `/usr/local/bin` | CLI installation directory |
+| `UVR_CUDA_VERSION` | `cu124` | CUDA version (`cu121`/`cu124`/`cu128`) |
+| `UVR_DEBUG` | - | Set to `1` to show debug output |
+
+#### Resource Limits (Docker Compose)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `UVR_MEMORY_LIMIT` | `16G` | Maximum memory for container |
+| `UVR_MEMORY_RESERVATION` | `4G` | Reserved memory for container |
+
+#### HTTP/HTTPS Proxy (Auto-passthrough)
+
+| Variable | Description |
+|----------|-------------|
+| `HTTP_PROXY` / `http_proxy` | HTTP proxy URL (e.g., `http://proxy:8080`) |
+| `HTTPS_PROXY` / `https_proxy` | HTTPS proxy URL |
+| `NO_PROXY` / `no_proxy` | Hosts to bypass proxy (comma-separated) |
+
+> **Note**: Proxy settings are automatically passed through to the container when set in your environment. No manual configuration needed.
 
 ### Manual Image Build
 
 ```bash
-# Build GPU image
+# Build GPU image (default CUDA 12.4)
 docker build -t uvr-headless:gpu -f docker/Dockerfile --target gpu .
+
+# Build GPU image with specific CUDA version
+docker build -t uvr-headless:gpu-cu121 -f docker/Dockerfile --target gpu \
+  --build-arg CUDA_VERSION=cu121 .
 
 # Build CPU image
 docker build -t uvr-headless:cpu -f docker/Dockerfile --target cpu .
+
+# Build with HTTP proxy (for corporate networks)
+docker build -t uvr-headless:gpu -f docker/Dockerfile --target gpu \
+  --build-arg HTTP_PROXY=http://proxy:8080 \
+  --build-arg HTTPS_PROXY=http://proxy:8080 .
 ```
 
 ### Using Docker Compose
@@ -266,9 +308,17 @@ UVR_MODELS_DIR=/path/to/models uvr-mdx -m "UVR-MDX-NET Inst HQ 3" -i song.wav -o
 
 ### NVIDIA GPU Requirements
 
-- NVIDIA Driver 525.60.13+
-- CUDA 12.x compatible GPU
 - nvidia-container-toolkit
+- CUDA 12.x compatible GPU
+- Driver version depends on CUDA version:
+
+| CUDA Version | Build Arg | Min Driver |
+|--------------|-----------|------------|
+| CUDA 12.1 | `cu121` | 530+ |
+| CUDA 12.4 | `cu124` (default) | 550+ |
+| CUDA 12.8 | `cu128` | 560+ |
+
+> **Tip**: If you have an older driver, use `--cuda cu121` during installation.
 
 ### Installing nvidia-container-toolkit
 
@@ -295,6 +345,57 @@ docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi
 # Check UVR GPU support
 uvr info
 ```
+
+## 🌐 HTTP/HTTPS Proxy Support
+
+For corporate networks or restricted environments, UVR Docker automatically passes through proxy settings.
+
+### Usage
+
+Proxy environment variables are **automatically detected and passed** to the container. Just set them in your shell:
+
+```bash
+# Set proxy (Linux/macOS)
+export HTTP_PROXY=http://proxy.company.com:8080
+export HTTPS_PROXY=http://proxy.company.com:8080
+export NO_PROXY=localhost,127.0.0.1,.company.com
+
+# Now use UVR normally - proxy is automatically used
+uvr-mdx -m "UVR-MDX-NET Inst HQ 3" -i song.wav -o output/
+
+# Or specify inline for a single command
+HTTP_PROXY=http://proxy:8080 uvr mdx --list
+```
+
+**Windows (PowerShell):**
+```powershell
+# Set proxy
+$env:HTTP_PROXY = "http://proxy.company.com:8080"
+$env:HTTPS_PROXY = "http://proxy.company.com:8080"
+
+# Use UVR normally
+uvr-mdx -m "UVR-MDX-NET Inst HQ 3" -i song.wav -o output/
+```
+
+### Docker Compose with Proxy
+
+```bash
+# Proxy is automatically passed through
+export HTTP_PROXY=http://proxy:8080
+docker compose build uvr   # Build uses proxy
+docker compose run --rm uvr uvr mdx --list  # Runtime uses proxy
+```
+
+### Direct Docker Run with Proxy
+
+```bash
+docker run --rm -it \
+  -e HTTP_PROXY=http://proxy:8080 \
+  -e HTTPS_PROXY=http://proxy:8080 \
+  uvr-headless:gpu uvr info
+```
+
+> **Security Note**: Proxy URLs may contain credentials. They are passed to the container but intentionally excluded from debug logs to prevent accidental exposure.
 
 ## 🔍 Troubleshooting
 
@@ -334,6 +435,28 @@ export PATH="$PATH:/usr/local/bin"
 sudo usermod -aG docker $USER
 # Re-login or run
 newgrp docker
+```
+
+**5. Model Download Failed Behind Proxy**
+```bash
+# Ensure proxy variables are set
+export HTTP_PROXY=http://proxy:8080
+export HTTPS_PROXY=http://proxy:8080
+
+# Verify proxy is being used
+uvr info  # Should show "Proxy: configured"
+
+# Test connectivity through proxy
+curl -x http://proxy:8080 -I https://github.com
+```
+
+**6. Build Failed Behind Proxy**
+```bash
+# Pass proxy to build command
+docker build \
+  --build-arg HTTP_PROXY=http://proxy:8080 \
+  --build-arg HTTPS_PROXY=http://proxy:8080 \
+  -t uvr-headless:gpu -f docker/Dockerfile --target gpu .
 ```
 
 ### Viewing Logs

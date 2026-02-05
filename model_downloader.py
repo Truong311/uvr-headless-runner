@@ -11,8 +11,22 @@ This module provides:
 4. UVR GUI-compatible directory structure
 5. Checksum verification
 6. Fuzzy model name matching
+7. HTTP/HTTPS proxy support
 
 Based on reverse engineering of UVR.py download_checks.json and related logic.
+
+HTTP/HTTPS Proxy Support:
+    This module automatically respects standard proxy environment variables:
+    - HTTP_PROXY / http_proxy: Proxy for HTTP connections
+    - HTTPS_PROXY / https_proxy: Proxy for HTTPS connections
+    - NO_PROXY / no_proxy: Comma-separated list of hosts to bypass
+    
+    Python's urllib automatically uses these when set. No manual configuration needed.
+    
+    Example:
+        export HTTP_PROXY=http://proxy.example.com:8080
+        export HTTPS_PROXY=http://proxy.example.com:8080
+        python -m model_downloader --download "model_name" --arch mdx
 
 Usage:
     from model_downloader import ModelDownloader
@@ -39,8 +53,119 @@ import shutil
 import time
 import socket
 import difflib
+import signal
+import atexit
+import threading
+import contextlib
+import errno
+import tempfile
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union, Any, Callable
+
+# Cross-platform file locking for concurrent container safety
+try:
+    import fcntl
+    HAS_FCNTL = True
+except ImportError:
+    HAS_FCNTL = False  # Windows - will use alternative approach
+
+try:
+    import msvcrt
+    HAS_MSVCRT = True
+except ImportError:
+    HAS_MSVCRT = False  # Not Windows
+
+# Global registry for active downloads (for cleanup on interrupt)
+_active_downloads: set = set()
+_download_lock = threading.Lock()  # Thread lock for in-process safety
+_original_sigint = None
+_original_sigterm = None
+
+# Minimum file size to be considered a valid model (prevents false-positive "installed")
+MIN_MODEL_FILE_SIZE = 1024  # 1 KB - any real model file is much larger
+
+# Enable/disable checksum verification (can be set via environment variable)
+# When enabled, downloads will verify SHA256 checksums if available
+VERIFY_CHECKSUMS = os.environ.get('UVR_VERIFY_CHECKSUMS', '1').lower() in ('1', 'true', 'yes')
+
+# URL for model checksums (if available from official source)
+MODEL_CHECKSUMS_URL = "https://raw.githubusercontent.com/TRvlvr/application_data/main/filelists/model_checksums.json"
+
+
+def get_proxy_status() -> dict:
+    """
+    Get current proxy configuration status.
+    
+    Returns a dict with proxy configuration info (without revealing credentials).
+    SECURITY: Only returns whether proxy is configured, not the actual URLs.
+    
+    Returns:
+        dict with keys: 'http_proxy', 'https_proxy', 'no_proxy', each containing
+        True/False indicating if that proxy type is configured.
+    """
+    return {
+        'http_proxy': bool(os.environ.get('HTTP_PROXY') or os.environ.get('http_proxy')),
+        'https_proxy': bool(os.environ.get('HTTPS_PROXY') or os.environ.get('https_proxy')),
+        'no_proxy': bool(os.environ.get('NO_PROXY') or os.environ.get('no_proxy')),
+    }
+
+
+def is_proxy_configured() -> bool:
+    """
+    Check if any HTTP/HTTPS proxy is configured.
+    
+    Returns:
+        True if HTTP_PROXY or HTTPS_PROXY is set, False otherwise.
+    """
+    status = get_proxy_status()
+    return status['http_proxy'] or status['https_proxy']
+
+
+def _cleanup_partial_downloads():
+    """Clean up any partial download files on exit."""
+    with _download_lock:
+        for temp_path in list(_active_downloads):
+            if os.path.exists(temp_path):
+                try:
+                    os.remove(temp_path)
+                except OSError:
+                    pass
+        _active_downloads.clear()
+
+
+def _signal_handler(signum, frame):
+    """Handle interrupt signals gracefully."""
+    _cleanup_partial_downloads()
+    # Restore original handler and re-raise
+    if signum == signal.SIGINT and _original_sigint:
+        signal.signal(signal.SIGINT, _original_sigint)
+    elif signum == signal.SIGTERM and _original_sigterm:
+        signal.signal(signal.SIGTERM, _original_sigterm)
+    sys.exit(128 + signum)
+
+
+def _register_cleanup_handlers():
+    """Register cleanup handlers (called once on module load)."""
+    global _original_sigint, _original_sigterm
+    
+    # Only register in main thread
+    if threading.current_thread() is not threading.main_thread():
+        return
+    
+    # Register atexit handler
+    atexit.register(_cleanup_partial_downloads)
+    
+    # Register signal handlers (preserve original handlers)
+    try:
+        _original_sigint = signal.signal(signal.SIGINT, _signal_handler)
+        _original_sigterm = signal.signal(signal.SIGTERM, _signal_handler)
+    except (ValueError, OSError):
+        # Signal handling not available (e.g., in some environments)
+        pass
+
+
+# Register handlers on module import
+_register_cleanup_handlers()
 
 # Try to import rich for beautiful progress bars
 try:
@@ -279,6 +404,248 @@ def calculate_file_hash(filepath: str, algorithm: str = 'md5', last_mb: int = 10
         return None
 
 
+def atomic_move(src: str, dst: str) -> None:
+    """
+    Atomically move a file from src to dst, handling cross-filesystem moves safely.
+    
+    This function ensures that:
+    1. If src and dst are on the same filesystem, uses atomic os.rename()
+    2. If cross-filesystem, copies to a temp file on dst filesystem first,
+       then performs atomic rename (prevents partial/corrupted files)
+    3. Backs up existing dst file and restores on failure (prevents data loss)
+    
+    Args:
+        src: Source file path
+        dst: Destination file path
+        
+    Raises:
+        OSError: If the move operation fails
+        IOError: If file operations fail
+    """
+    backup_path = None
+    temp_dst = None
+    
+    try:
+        # Step 1: Backup existing destination file if it exists
+        if os.path.exists(dst):
+            backup_path = dst + '.backup.' + str(os.getpid())
+            try:
+                os.rename(dst, backup_path)
+            except OSError:
+                # If rename fails (cross-filesystem), try copy
+                shutil.copy2(dst, backup_path)
+                os.remove(dst)
+        
+        # Step 2: Try atomic rename first (works if same filesystem)
+        try:
+            os.rename(src, dst)
+            # Success! Clean up backup
+            if backup_path and os.path.exists(backup_path):
+                os.remove(backup_path)
+            return
+        except OSError as e:
+            if e.errno != errno.EXDEV:  # Not a cross-device link error
+                raise
+            # Cross-filesystem move needed, continue below
+        
+        # Step 3: Cross-filesystem move - copy to temp on dst filesystem, then atomic rename
+        dst_dir = os.path.dirname(dst) or '.'
+        
+        # Create temp file in the same directory as dst (same filesystem)
+        fd, temp_dst = tempfile.mkstemp(
+            prefix='.atomic_', 
+            suffix='.tmp',
+            dir=dst_dir
+        )
+        os.close(fd)
+        
+        # Copy with metadata
+        shutil.copy2(src, temp_dst)
+        
+        # Verify copy integrity by comparing sizes
+        src_size = os.path.getsize(src)
+        tmp_size = os.path.getsize(temp_dst)
+        if src_size != tmp_size:
+            raise IOError(
+                f"Copy verification failed: source {src_size} bytes, "
+                f"copy {tmp_size} bytes"
+            )
+        
+        # Atomic rename on same filesystem (guaranteed to work now)
+        os.rename(temp_dst, dst)
+        temp_dst = None  # Mark as successfully moved
+        
+        # Remove source file
+        os.remove(src)
+        
+        # Clean up backup
+        if backup_path and os.path.exists(backup_path):
+            os.remove(backup_path)
+            
+    except Exception:
+        # Restore backup on any failure
+        if backup_path and os.path.exists(backup_path):
+            try:
+                if os.path.exists(dst):
+                    os.remove(dst)
+                os.rename(backup_path, dst)
+            except OSError:
+                pass  # Best effort restore
+        
+        # Clean up temp file
+        if temp_dst and os.path.exists(temp_dst):
+            try:
+                os.remove(temp_dst)
+            except OSError:
+                pass
+        
+        raise
+    
+    finally:
+        # Final cleanup of any leftover temp/backup files
+        for path in [backup_path, temp_dst]:
+            if path and os.path.exists(path):
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+
+
+def is_valid_model_file(filepath: str, min_size: int = MIN_MODEL_FILE_SIZE) -> bool:
+    """
+    Check if a file exists and is a valid model file (not corrupted/truncated).
+    
+    This prevents false-positive "installed" status for:
+    - Zero-byte files
+    - Truncated files from interrupted downloads
+    - Corrupted files
+    
+    Args:
+        filepath: Path to the model file
+        min_size: Minimum file size in bytes to be considered valid
+        
+    Returns:
+        True if file exists and appears valid, False otherwise
+    """
+    if not os.path.isfile(filepath):
+        return False
+    
+    try:
+        size = os.path.getsize(filepath)
+        if size < min_size:
+            return False
+        
+        # Quick readability check - try to read first few bytes
+        with open(filepath, 'rb') as f:
+            header = f.read(16)
+            if len(header) < 16 and size >= 16:
+                return False  # File is unreadable or corrupted
+                
+        return True
+    except (OSError, IOError):
+        return False
+
+
+@contextlib.contextmanager
+def file_lock(lock_path: str, timeout: float = 300.0):
+    """
+    Cross-platform file lock context manager for concurrent container safety.
+    
+    This prevents race conditions when multiple containers try to download
+    the same model simultaneously.
+    
+    IMPORTANT: Uses directory-based locking (mkdir is atomic even on NFS)
+    as primary mechanism, with fcntl as secondary optimization for local filesystems.
+    This ensures correct behavior on networked filesystems (NFS, CIFS, etc.)
+    where fcntl advisory locks may not work across hosts.
+    
+    Args:
+        lock_path: Path to the lock file (will be used to derive lock directory)
+        timeout: Maximum time to wait for lock in seconds (default 5 minutes)
+        
+    Yields:
+        None when lock is acquired
+        
+    Raises:
+        TimeoutError: If lock cannot be acquired within timeout
+        OSError: If lock cannot be created
+    """
+    # Use directory-based locking - mkdir is atomic on ALL filesystems including NFS
+    # This is more reliable than fcntl which only works as advisory lock on NFS
+    lock_dir_path = lock_path + '.lockdir'
+    parent_dir = os.path.dirname(lock_path)
+    if parent_dir and not os.path.exists(parent_dir):
+        os.makedirs(parent_dir, exist_ok=True)
+    
+    start_time = time.time()
+    lock_acquired = False
+    stale_threshold = 3600  # Consider lock stale after 1 hour
+    
+    try:
+        while True:
+            try:
+                # mkdir is atomic - if it succeeds, we have the lock
+                os.mkdir(lock_dir_path)
+                lock_acquired = True
+                
+                # Write PID and timestamp for debugging and stale lock detection
+                lock_info_file = os.path.join(lock_dir_path, 'info')
+                try:
+                    with open(lock_info_file, 'w') as f:
+                        f.write(f"pid={os.getpid()}\n")
+                        f.write(f"time={time.time()}\n")
+                        f.write(f"host={socket.gethostname()}\n")
+                except OSError:
+                    pass  # Info file is optional
+                
+                break  # Lock acquired successfully
+                
+            except FileExistsError:
+                # Lock directory exists - check if it's stale
+                lock_info_file = os.path.join(lock_dir_path, 'info')
+                try:
+                    if os.path.exists(lock_info_file):
+                        mtime = os.path.getmtime(lock_info_file)
+                        if time.time() - mtime > stale_threshold:
+                            # Stale lock - try to remove it
+                            try:
+                                shutil.rmtree(lock_dir_path)
+                                continue  # Retry acquiring lock
+                            except OSError:
+                                pass  # Another process may have removed it
+                except OSError:
+                    pass  # Can't check, just wait
+                
+                # Check timeout
+                elapsed = time.time() - start_time
+                if elapsed > timeout:
+                    raise TimeoutError(
+                        f"Could not acquire lock on {lock_path} within {timeout}s. "
+                        "Another process may be downloading this model. "
+                        f"Lock directory: {lock_dir_path}"
+                    )
+                
+                # Wait with exponential backoff (max 5 seconds)
+                wait_time = min(0.5 * (1.1 ** min(elapsed / 10, 20)), 5.0)
+                time.sleep(wait_time)
+                
+            except OSError as e:
+                if e.errno == errno.EEXIST:
+                    # Race condition - another process created it first
+                    continue
+                raise
+        
+        yield  # Lock held, execute protected code
+        
+    finally:
+        # Release lock by removing directory
+        if lock_acquired:
+            try:
+                shutil.rmtree(lock_dir_path)
+            except OSError:
+                pass  # Best effort cleanup
+
+
 class ModelDownloader:
     """
     Handles model registry sync and downloading for all UVR architectures.
@@ -320,10 +687,14 @@ class ModelDownloader:
         self.mdx_download_list: Dict = {}
         self.demucs_download_list: Dict = {}
         
+        # Model checksums for integrity verification
+        self.model_checksums: Dict[str, str] = {}
+        
         # Local cache path for download_checks.json
         self.cache_dir = os.path.join(base_path, '.model_cache')
         os.makedirs(self.cache_dir, exist_ok=True)
         self.download_checks_cache = os.path.join(self.cache_dir, 'download_checks.json')
+        self.checksums_cache = os.path.join(self.cache_dir, 'model_checksums.json')
     
     def _log(self, message: str):
         """Print message if verbose mode is enabled."""
@@ -366,6 +737,10 @@ class ModelDownloader:
             try:
                 self._log("Syncing model registry from official UVR sources...")
                 
+                # Log proxy status on first attempt (helps with debugging)
+                if attempt == 0 and is_proxy_configured():
+                    self._log("  Using HTTP proxy (configured via environment)")
+                
                 # Fetch download_checks.json (UVR.py line 5605)
                 request = urllib.request.Request(
                     DOWNLOAD_CHECKS_URL,
@@ -401,6 +776,11 @@ class ModelDownloader:
                             pass
                 
                 self._populate_model_lists()
+                
+                # Also sync checksums (optional, non-blocking)
+                if VERIFY_CHECKSUMS:
+                    self.sync_checksums()
+                
                 self._log("Model registry synced successfully!")
                 return True
                 
@@ -487,6 +867,116 @@ class ModelDownloader:
         self.mdx_download_list.update(self.online_data.get("other_network_list", {}))
         self.mdx_download_list.update(self.online_data.get("other_network_list_new", {}))
     
+    def sync_checksums(self, force: bool = False) -> bool:
+        """
+        Sync model checksums from official source for integrity verification.
+        
+        Args:
+            force: Force refresh even if cache exists
+            
+        Returns:
+            True if checksums available, False otherwise
+        """
+        if not VERIFY_CHECKSUMS:
+            return False
+        
+        # Check cache first
+        if not force and os.path.isfile(self.checksums_cache):
+            try:
+                cache_age = os.path.getmtime(self.checksums_cache)
+                if time.time() - cache_age < 86400:  # Cache valid for 24 hours
+                    with open(self.checksums_cache, 'r', encoding='utf-8') as f:
+                        self.model_checksums = json.load(f)
+                    return bool(self.model_checksums)
+            except (OSError, json.JSONDecodeError):
+                pass
+        
+        # Try to fetch from network
+        try:
+            request = urllib.request.Request(
+                MODEL_CHECKSUMS_URL,
+                headers={'User-Agent': 'UVR-Headless-Runner/1.0'}
+            )
+            with urllib.request.urlopen(request, timeout=DEFAULT_TIMEOUT) as response:
+                raw_data = response.read().decode('utf-8')
+                self.model_checksums = json.loads(raw_data)
+            
+            # Save to cache
+            try:
+                with open(self.checksums_cache, 'w', encoding='utf-8') as f:
+                    json.dump(self.model_checksums, f, indent=2)
+            except OSError:
+                pass
+            
+            return bool(self.model_checksums)
+            
+        except (urllib.error.URLError, urllib.error.HTTPError, socket.timeout, json.JSONDecodeError):
+            # Checksums not available - this is OK, verification is optional
+            # Try loading from cache as fallback
+            if os.path.isfile(self.checksums_cache):
+                try:
+                    with open(self.checksums_cache, 'r', encoding='utf-8') as f:
+                        self.model_checksums = json.load(f)
+                    return bool(self.model_checksums)
+                except (OSError, json.JSONDecodeError):
+                    pass
+            return False
+    
+    def get_model_checksum(self, filename: str) -> Optional[str]:
+        """
+        Get expected checksum for a model file.
+        
+        Args:
+            filename: Model filename
+            
+        Returns:
+            SHA256 checksum string or None if not available
+        """
+        if not self.model_checksums:
+            self.sync_checksums()
+        return self.model_checksums.get(filename)
+    
+    def verify_file_checksum(self, filepath: str, expected_hash: str = None) -> Tuple[bool, str]:
+        """
+        Verify file integrity using SHA256 checksum.
+        
+        Args:
+            filepath: Path to file to verify
+            expected_hash: Expected SHA256 hash (if None, looks up from registry)
+            
+        Returns:
+            Tuple of (is_valid, message)
+        """
+        if not os.path.isfile(filepath):
+            return False, f"File not found: {filepath}"
+        
+        filename = os.path.basename(filepath)
+        
+        if expected_hash is None:
+            expected_hash = self.get_model_checksum(filename)
+        
+        if expected_hash is None:
+            return True, f"No checksum available for {filename} (skipping verification)"
+        
+        # Calculate full file SHA256
+        try:
+            sha256 = hashlib.sha256()
+            with open(filepath, 'rb') as f:
+                for chunk in iter(lambda: f.read(65536), b''):
+                    sha256.update(chunk)
+            actual_hash = sha256.hexdigest()
+            
+            if actual_hash.lower() == expected_hash.lower():
+                return True, f"Checksum verified: {filename}"
+            else:
+                return False, (
+                    f"Checksum mismatch for {filename}:\n"
+                    f"  Expected: {expected_hash}\n"
+                    f"  Actual:   {actual_hash}"
+                )
+        except OSError as e:
+            return False, f"Cannot read file for checksum: {e}"
+    
     def list_models(self, arch_type: str, show_installed: bool = True) -> List[Dict[str, Any]]:
         """
         List available models for an architecture.
@@ -529,23 +1019,26 @@ class ModelDownloader:
                 model_data['files'] = files
                 model_data['is_multi_file'] = True
                 
-                # Check if installed (all files present)
+                # Check if installed (all files present AND valid)
                 if arch_type == 'demucs':
                     is_newer = any(x in display_name for x in ['v3', 'v4'])
                     check_dir = self.demucs_newer_repo_dir if is_newer else self.demucs_models_dir
                 else:
                     check_dir = model_dir
                 
+                # Use is_valid_model_file instead of os.path.isfile to prevent
+                # false-positive "installed" status for corrupted/truncated files
                 installed = all(
-                    os.path.isfile(os.path.join(check_dir, f)) or
-                    os.path.isfile(os.path.join(self.mdx_c_config_path, f))
+                    is_valid_model_file(os.path.join(check_dir, f)) or
+                    is_valid_model_file(os.path.join(self.mdx_c_config_path, f))
                     for f in files
                 )
             else:
                 # Simple model (single file)
                 model_data['files'] = [str(model_info)]
                 model_data['is_multi_file'] = False
-                installed = os.path.isfile(os.path.join(model_dir, str(model_info)))
+                # Use is_valid_model_file to verify file is not corrupted/truncated
+                installed = is_valid_model_file(os.path.join(model_dir, str(model_info)))
             
             if show_installed:
                 model_data['installed'] = installed
@@ -648,16 +1141,16 @@ class ModelDownloader:
                     result['save_dir'] = model_dir
                     result['local_path'] = os.path.join(model_dir, filename)
                 
-                # Check if installed
+                # Check if installed (using is_valid_model_file to prevent false-positives)
                 if result.get('is_multi_file'):
                     save_dir = result.get('save_dir', model_dir)
                     result['installed'] = all(
-                        os.path.isfile(os.path.join(save_dir, f)) or
-                        os.path.isfile(os.path.join(self.mdx_c_config_path, f))
+                        is_valid_model_file(os.path.join(save_dir, f)) or
+                        is_valid_model_file(os.path.join(self.mdx_c_config_path, f))
                         for f in result['files'].keys()
                     )
                 else:
-                    result['installed'] = os.path.isfile(result.get('local_path', ''))
+                    result['installed'] = is_valid_model_file(result.get('local_path', ''))
                 
                 return result
         
@@ -705,39 +1198,87 @@ class ModelDownloader:
         
         try:
             if model_info.get('is_multi_file'):
-                # Download multiple files (Demucs or MDX-C/Roformer)
+                # Download multiple files (Demucs or MDX-C/Roformer) TRANSACTIONALLY
+                # All files are downloaded to a staging directory first, then moved atomically
                 files = model_info['files']
                 save_dir = model_info.get('save_dir', self.mdx_models_dir)
                 
                 total_files = len(files)
-                downloaded_files = 0
                 
-                for i, (filename, url) in enumerate(files.items(), 1):
-                    # Determine save path
+                # Check which files already exist (and are valid)
+                files_to_download = {}
+                existing_files = 0
+                for filename, url in files.items():
                     if filename.endswith('.yaml') and arch_type in ['mdx', 'mdx-net']:
-                        save_path = os.path.join(self.mdx_c_config_path, filename)
+                        final_path = os.path.join(self.mdx_c_config_path, filename)
                     else:
-                        save_path = os.path.join(save_dir, filename)
+                        final_path = os.path.join(save_dir, filename)
                     
-                    # Skip if already exists
-                    if os.path.isfile(save_path):
-                        self._log(f"  [{i}/{total_files}] {filename} (already exists)")
-                        downloaded_files += 1
-                        continue
-                    
-                    self._log(f"  [{i}/{total_files}] Downloading {filename}...")
-                    try:
-                        self._download_file(url, save_path, progress_callback)
-                        downloaded_files += 1
-                    except (DownloadError, NetworkError, IntegrityError) as e:
-                        # Partial download - report which files failed
-                        return False, (
-                            f"Download failed for {filename}: {e.message}\n"
-                            f"  Downloaded {downloaded_files}/{total_files} files.\n"
-                            f"  {e.suggestion if e.suggestion else ''}"
-                        )
+                    if is_valid_model_file(final_path):
+                        existing_files += 1
+                        self._log(f"  [exists] {filename}")
+                    else:
+                        files_to_download[filename] = (url, final_path)
                 
-                return True, f"Successfully downloaded: {model_name} ({downloaded_files} files)"
+                # If all files exist, we're done
+                if not files_to_download:
+                    return True, f"All {total_files} files already installed: {model_name}"
+                
+                # Create staging directory for transactional download
+                staging_dir = os.path.join(save_dir, f'.staging_{os.getpid()}_{int(time.time())}')
+                staged_files = []  # Track for cleanup on failure
+                
+                try:
+                    os.makedirs(staging_dir, exist_ok=True)
+                    
+                    # Download all files to staging directory
+                    for i, (filename, (url, final_path)) in enumerate(files_to_download.items(), 1):
+                        self._log(f"  [{i}/{len(files_to_download)}] Downloading {filename}...")
+                        
+                        staging_path = os.path.join(staging_dir, filename)
+                        staged_files.append((staging_path, final_path, filename))
+                        
+                        try:
+                            self._download_file(url, staging_path, progress_callback)
+                        except (DownloadError, NetworkError, IntegrityError) as e:
+                            # Clean up staging directory on failure
+                            return False, (
+                                f"Download failed for {filename}: {e.message}\n"
+                                f"  Downloaded {i-1}/{len(files_to_download)} files.\n"
+                                f"  {e.suggestion if e.suggestion else ''}"
+                            )
+                    
+                    # All downloads successful - now move atomically to final locations
+                    self._log("  Moving downloaded files to final location...")
+                    moved_files = []
+                    try:
+                        for staging_path, final_path, filename in staged_files:
+                            # Ensure target directory exists
+                            final_dir = os.path.dirname(final_path)
+                            os.makedirs(final_dir, exist_ok=True)
+                            
+                            atomic_move(staging_path, final_path)
+                            moved_files.append(final_path)
+                    except (OSError, IOError) as e:
+                        # Rollback: remove any files that were successfully moved
+                        for moved_path in moved_files:
+                            try:
+                                os.remove(moved_path)
+                            except OSError:
+                                pass
+                        raise DownloadError(
+                            f"Failed to move files to final location: {e}",
+                            "Check disk space and permissions."
+                        )
+                    
+                    return True, f"Successfully downloaded: {model_name} ({len(files_to_download)} new files)"
+                    
+                finally:
+                    # Clean up staging directory
+                    try:
+                        shutil.rmtree(staging_dir, ignore_errors=True)
+                    except OSError:
+                        pass
             else:
                 # Download single file
                 url = model_info['url']
@@ -775,6 +1316,7 @@ class ModelDownloader:
         Download a file with progress reporting, resume support, and integrity checking.
         
         Features:
+        - Cross-process file locking (prevents concurrent container race conditions)
         - Retry with exponential backoff
         - Resume partial downloads
         - Disk space pre-check
@@ -793,11 +1335,13 @@ class ModelDownloader:
             DownloadError: If download fails after all retries
             DiskSpaceError: If insufficient disk space
             IntegrityError: If hash verification fails
+            TimeoutError: If cannot acquire file lock (another process downloading)
         """
         temp_path = save_path + '.tmp'
+        lock_path = save_path + '.lock'
         filename = os.path.basename(save_path)
         
-        # Ensure directory exists
+        # Ensure directory exists before acquiring lock
         save_dir = os.path.dirname(save_path)
         try:
             os.makedirs(save_dir, exist_ok=True)
@@ -806,6 +1350,45 @@ class ModelDownloader:
                 f"Cannot create directory: {save_dir}",
                 f"Check write permissions or create the directory manually: {e}"
             )
+        
+        # Use cross-process file lock to prevent concurrent container race conditions
+        # This is CRITICAL for data integrity when multiple containers run simultaneously
+        try:
+            with file_lock(lock_path, timeout=300.0):
+                # After acquiring lock, check if another process already completed the download
+                if is_valid_model_file(save_path):
+                    self._log(f"    {filename} already downloaded by another process")
+                    return
+                
+                # Proceed with download inside the lock
+                self._download_file_impl(
+                    url, save_path, temp_path, filename, save_dir,
+                    progress_callback, expected_size, expected_hash, verify_size
+                )
+        except TimeoutError as e:
+            raise DownloadError(
+                f"Could not acquire download lock for {filename}",
+                str(e)
+            )
+    
+    def _download_file_impl(
+        self,
+        url: str,
+        save_path: str,
+        temp_path: str,
+        filename: str,
+        save_dir: str,
+        progress_callback: Optional[Callable] = None,
+        expected_size: int = 0,
+        expected_hash: str = None,
+        verify_size: bool = True
+    ):
+        """
+        Internal implementation of file download (called with lock held).
+        """
+        # Register this download for cleanup on interrupt
+        with _download_lock:
+            _active_downloads.add(temp_path)
         
         last_error = None
         for attempt in range(MAX_RETRIES + 1):
@@ -895,18 +1478,23 @@ class ModelDownloader:
                             "The downloaded file is corrupted. Will retry download."
                         )
                 
-                # Atomic move to final location
+                # Atomic move to final location (with backup/restore for safety)
                 try:
-                    if os.path.exists(save_path):
-                        os.remove(save_path)
-                    shutil.move(temp_path, save_path)
+                    atomic_move(temp_path, save_path)
                 except OSError as e:
                     raise DownloadError(
                         f"Cannot save file: {save_path}",
                         f"Check file permissions: {e}"
                     )
+                except IOError as e:
+                    raise IntegrityError(
+                        f"File copy verification failed for {filename}",
+                        str(e)
+                    )
                 
-                # Success!
+                # Success! Unregister from cleanup tracking
+                with _download_lock:
+                    _active_downloads.discard(temp_path)
                 return
                 
             except urllib.error.HTTPError as e:
@@ -960,7 +1548,9 @@ class ModelDownloader:
                 time.sleep(wait_time)
         
         # All retries exhausted
-        # Clean up temp file
+        # Clean up temp file and unregister from tracking
+        with _download_lock:
+            _active_downloads.discard(temp_path)
         if os.path.isfile(temp_path):
             try:
                 os.remove(temp_path)
