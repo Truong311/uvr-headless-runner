@@ -21,14 +21,14 @@
 #
 # Build:
 #   # Default (CUDA 12.4 - best compatibility)
-#   docker build -t uvr-headless:gpu -f docker/Dockerfile .
+#   docker build -t uvr-headless-runner:gpu -f docker/Dockerfile .
 #
 #   # Specific CUDA version
-#   docker build -t uvr-headless:gpu --build-arg CUDA_VERSION=cu124 -f docker/Dockerfile .
-#   docker build -t uvr-headless:gpu --build-arg CUDA_VERSION=cu121 -f docker/Dockerfile .
+#   docker build -t uvr-headless-runner:gpu --build-arg CUDA_VERSION=cu124 -f docker/Dockerfile .
+#   docker build -t uvr-headless-runner:gpu --build-arg CUDA_VERSION=cu121 -f docker/Dockerfile .
 #
 #   # CPU only
-#   docker build -t uvr-headless:cpu -f docker/Dockerfile --target cpu .
+#   docker build -t uvr-headless-runner:cpu -f docker/Dockerfile --target cpu .
 #
 # CUDA Version Compatibility:
 #   cu121 - CUDA 12.1, requires driver 530+

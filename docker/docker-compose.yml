@@ -50,7 +50,7 @@ services:
         http_proxy: ${http_proxy:-}
         https_proxy: ${https_proxy:-}
         no_proxy: ${no_proxy:-}
-    image: uvr-headless:gpu-${CUDA_VERSION:-cu124}
+    image: uvr-headless-runner:gpu-${CUDA_VERSION:-cu124}
     container_name: uvr-headless-gpu
     
     # NVIDIA GPU support with resource limits
@@ -126,7 +126,7 @@ services:
         http_proxy: ${http_proxy:-}
         https_proxy: ${https_proxy:-}
         no_proxy: ${no_proxy:-}
-    image: uvr-headless:cpu
+    image: uvr-headless-runner:cpu
     container_name: uvr-headless-cpu
     profiles:
       - cpu

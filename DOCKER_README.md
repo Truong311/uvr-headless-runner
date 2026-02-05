@@ -124,17 +124,17 @@ docker/
 
 ```bash
 # Build GPU image (default CUDA 12.4)
-docker build -t uvr-headless:gpu -f docker/Dockerfile --target gpu .
+docker build -t uvr-headless-runner:gpu -f docker/Dockerfile --target gpu .
 
 # Build GPU image with specific CUDA version
-docker build -t uvr-headless:gpu-cu121 -f docker/Dockerfile --target gpu \
+docker build -t uvr-headless-runner:gpu-cu121 -f docker/Dockerfile --target gpu \
   --build-arg CUDA_VERSION=cu121 .
 
 # Build CPU image
-docker build -t uvr-headless:cpu -f docker/Dockerfile --target cpu .
+docker build -t uvr-headless-runner:cpu -f docker/Dockerfile --target cpu .
 
 # Build with HTTP proxy (for corporate networks)
-docker build -t uvr-headless:gpu -f docker/Dockerfile --target gpu \
+docker build -t uvr-headless-runner:gpu -f docker/Dockerfile --target gpu \
   --build-arg HTTP_PROXY=http://proxy:8080 \
   --build-arg HTTPS_PROXY=http://proxy:8080 .
 ```
@@ -159,7 +159,7 @@ docker run --rm -it --gpus all \
   -v ~/.uvr_models:/models \
   -v $(pwd)/input:/input:ro \
   -v $(pwd)/output:/output \
-  uvr-headless:gpu \
+  uvr-headless-runner:gpu \
   uvr-mdx -m "UVR-MDX-NET Inst HQ 3" -i /input/song.wav -o /output/
 
 # CPU mode
@@ -167,7 +167,7 @@ docker run --rm -it \
   -v ~/.uvr_models:/models \
   -v $(pwd)/input:/input:ro \
   -v $(pwd)/output:/output \
-  uvr-headless:cpu \
+  uvr-headless-runner:cpu \
   uvr-mdx -m "UVR-MDX-NET Inst HQ 3" -i /input/song.wav -o /output/
 ```
 
@@ -392,7 +392,7 @@ docker compose run --rm uvr uvr mdx --list  # Runtime uses proxy
 docker run --rm -it \
   -e HTTP_PROXY=http://proxy:8080 \
   -e HTTPS_PROXY=http://proxy:8080 \
-  uvr-headless:gpu uvr info
+  uvr-headless-runner:gpu uvr info
 ```
 
 > **Security Note**: Proxy URLs may contain credentials. They are passed to the container but intentionally excluded from debug logs to prevent accidental exposure.
@@ -456,7 +456,7 @@ curl -x http://proxy:8080 -I https://github.com
 docker build \
   --build-arg HTTP_PROXY=http://proxy:8080 \
   --build-arg HTTPS_PROXY=http://proxy:8080 \
-  -t uvr-headless:gpu -f docker/Dockerfile --target gpu .
+  -t uvr-headless-runner:gpu -f docker/Dockerfile --target gpu .
 ```
 
 ### Viewing Logs
@@ -479,7 +479,7 @@ uvr-mdx -m <model> -i <input> -o <output> --quiet
 .\docker\install.ps1 -Uninstall
 
 # Remove Docker images
-docker rmi uvr-headless:gpu uvr-headless:cpu
+docker rmi uvr-headless-runner:gpu uvr-headless-runner:cpu
 
 # Remove model cache
 rm -rf ~/.uvr_models

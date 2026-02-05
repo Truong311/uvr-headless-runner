@@ -8,15 +8,21 @@
 #   uvr-vr -m "UVR-De-Echo-Normal" -i song.wav -o output/
 #
 # Without needing to type `docker run` commands!
+# By default, it pulls pre-built images from Docker Hub for fast installation.
 #
 # Usage:
-#   ./docker/install.sh              # Install with auto-detected GPU support (CUDA 12.4)
+#   ./docker/install.sh              # Quick install (pulls from Docker Hub)
 #   ./docker/install.sh --cpu        # Force CPU-only installation
 #   ./docker/install.sh --gpu        # Force GPU installation (CUDA 12.4)
 #   ./docker/install.sh --cuda cu121 # GPU with specific CUDA version
 #   ./docker/install.sh --cuda cu124 # GPU with CUDA 12.4 (default)
 #   ./docker/install.sh --cuda cu128 # GPU with CUDA 12.8
+#   ./docker/install.sh --build      # Force local build (slower)
 #   ./docker/install.sh --uninstall  # Remove installed wrappers
+#
+# Image Source:
+#   Default: Pulls pre-built images from Docker Hub (fast, ~2-5 min)
+#   --build: Builds locally from source (slower, ~10-30 min)
 #
 # CUDA Version Options:
 #   cu121 - CUDA 12.1, requires NVIDIA driver 530+
@@ -32,9 +38,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 INSTALL_DIR="${UVR_INSTALL_DIR:-/usr/local/bin}"
 MODELS_DIR="${UVR_MODELS_DIR:-${HOME}/.uvr_models}"
-IMAGE_NAME="uvr-headless"
+IMAGE_NAME="uvr-headless-runner"
+# Docker Hub image for pre-built images (much faster!)
+DOCKERHUB_IMAGE="chyinan/uvr-headless-runner"
 # CUDA version for GPU builds (cu121, cu124, cu128)
 CUDA_VERSION="${UVR_CUDA_VERSION:-cu124}"
+# Whether to force local build instead of pulling from Docker Hub
+FORCE_BUILD="${UVR_FORCE_BUILD:-}"
 
 # Colors
 RED='\033[0;31m'
@@ -154,8 +164,34 @@ check_install_permissions() {
 }
 
 # ------------------------------------------------------------------------------
-# Build Docker Image
+# Pull or Build Docker Image
 # ------------------------------------------------------------------------------
+pull_image() {
+    local target="$1"
+    local local_tag="$2"
+    local hub_tag
+    
+    # Map target to Docker Hub tag
+    if [ "${target}" = "gpu" ]; then
+        hub_tag="${DOCKERHUB_IMAGE}:latest"
+    else
+        hub_tag="${DOCKERHUB_IMAGE}:latest-cpu"
+    fi
+    
+    log_info "Pulling pre-built image from Docker Hub: ${hub_tag}"
+    log_info "This is much faster than building locally!"
+    
+    if docker pull "${hub_tag}"; then
+        # Tag the pulled image with our local tag for consistency
+        docker tag "${hub_tag}" "${local_tag}"
+        log_success "Image pulled and tagged: ${local_tag}"
+        return 0
+    else
+        log_warn "Failed to pull from Docker Hub"
+        return 1
+    fi
+}
+
 build_image() {
     local target="$1"
     local cuda_ver="$2"
@@ -167,11 +203,20 @@ build_image() {
         tag="${IMAGE_NAME}:${target}"
     fi
     
-    log_info "Building Docker image: ${tag}"
+    # Try pulling from Docker Hub first (unless force build is set)
+    if [ -z "${FORCE_BUILD}" ]; then
+        if pull_image "${target}" "${tag}"; then
+            return 0
+        fi
+        log_info "Falling back to local build..."
+        echo ""
+    fi
+    
+    log_info "Building Docker image locally: ${tag}"
     if [ "${target}" = "gpu" ]; then
         log_info "CUDA version: ${cuda_ver}"
     fi
-    log_info "This may take several minutes on first build..."
+    log_info "This may take 10-30 minutes on first build..."
     
     cd "${PROJECT_ROOT}"
     
@@ -581,6 +626,10 @@ while [[ $# -gt 0 ]]; do
             ACTION="uninstall"
             shift
             ;;
+        --build)
+            FORCE_BUILD="1"
+            shift
+            ;;
         --help|-h)
             print_banner
             echo "Usage: $0 [OPTIONS]"
@@ -590,8 +639,13 @@ while [[ $# -gt 0 ]]; do
             echo "  --gpu           Force GPU installation (uses default CUDA version)"
             echo "  --cuda VERSION  GPU installation with specific CUDA version"
             echo "                  VERSION: cu121, cu124 (default), cu128"
+            echo "  --build         Force local build instead of pulling from Docker Hub"
             echo "  --uninstall     Remove installed CLI wrappers"
             echo "  --help          Show this help message"
+            echo ""
+            echo "Image Source:"
+            echo "  By default, the script pulls pre-built images from Docker Hub (fast!)"
+            echo "  Use --build to force local building (slower, but uses latest code)"
             echo ""
             echo "CUDA Versions:"
             echo "  cu121 - CUDA 12.1, requires NVIDIA driver 530+"
@@ -602,6 +656,7 @@ while [[ $# -gt 0 ]]; do
             echo "  UVR_INSTALL_DIR    Installation directory (default: /usr/local/bin)"
             echo "  UVR_MODELS_DIR     Model cache directory (default: ~/.uvr_models)"
             echo "  UVR_CUDA_VERSION   CUDA version (default: cu124)"
+            echo "  UVR_FORCE_BUILD    Set to 1 to force local build"
             echo "  UVR_DEBUG          Set to 1 to show debug output"
             echo ""
             echo "Proxy Support (auto-passthrough if set):"
@@ -610,11 +665,14 @@ while [[ $# -gt 0 ]]; do
             echo "  NO_PROXY           Comma-separated list of hosts to bypass proxy"
             echo ""
             echo "Examples:"
+            echo "  # Quick install (pulls from Docker Hub)"
+            echo "  ./docker/install.sh"
+            echo ""
             echo "  # Install to user directory (no sudo needed)"
             echo "  UVR_INSTALL_DIR=\$HOME/.local/bin ./docker/install.sh"
             echo ""
-            echo "  # Install GPU with CUDA 12.1 (for older drivers)"
-            echo "  ./docker/install.sh --cuda cu121"
+            echo "  # Force local build with CUDA 12.1"
+            echo "  ./docker/install.sh --cuda cu121 --build"
             echo ""
             echo "  # Install with custom model directory"
             echo "  UVR_MODELS_DIR=/data/models ./docker/install.sh"

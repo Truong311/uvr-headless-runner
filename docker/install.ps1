@@ -2,15 +2,21 @@
 # UVR Headless Runner - Windows Installation Script (PowerShell)
 # ==============================================================================
 # This script installs native-style CLI wrappers for Windows.
+# By default, it pulls pre-built images from Docker Hub for fast installation.
 #
 # Usage:
-#   .\docker\install.ps1                     # Install with auto-detected GPU support (CUDA 12.4)
+#   .\docker\install.ps1                     # Quick install (pulls from Docker Hub)
 #   .\docker\install.ps1 -Cpu                # Force CPU-only installation
 #   .\docker\install.ps1 -Gpu                # Force GPU installation (CUDA 12.4)
 #   .\docker\install.ps1 -Cuda cu121         # GPU with CUDA 12.1 (driver 530+)
 #   .\docker\install.ps1 -Cuda cu124         # GPU with CUDA 12.4 (driver 550+, default)
 #   .\docker\install.ps1 -Cuda cu128         # GPU with CUDA 12.8 (driver 560+)
+#   .\docker\install.ps1 -Build              # Force local build (slower)
 #   .\docker\install.ps1 -Uninstall          # Remove installed wrappers
+#
+# Image Source:
+#   Default: Pulls pre-built images from Docker Hub (fast, ~2-5 min)
+#   -Build:  Builds locally from source (slower, ~10-30 min)
 #
 # CUDA Version Options:
 #   cu121 - CUDA 12.1, requires NVIDIA driver 530+
@@ -24,6 +30,7 @@ param(
     [switch]$Gpu,
     [ValidateSet("cu121", "cu124", "cu128")]
     [string]$Cuda = "",
+    [switch]$Build,        # Force local build instead of pulling from Docker Hub
     [switch]$Uninstall,
     [switch]$Help
 )
@@ -35,8 +42,11 @@ $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ProjectRoot = Split-Path -Parent $ScriptDir
 $InstallDir = if ($env:UVR_INSTALL_DIR) { $env:UVR_INSTALL_DIR } else { "$env:LOCALAPPDATA\UVR" }
 $ModelsDir = if ($env:UVR_MODELS_DIR) { $env:UVR_MODELS_DIR } else { "$env:USERPROFILE\.uvr_models" }
-$ImageName = "uvr-headless"
+$ImageName = "uvr-headless-runner"
+# Docker Hub image for pre-built images (much faster!)
+$DockerHubImage = "chyinan/uvr-headless-runner"
 $DefaultCudaVersion = if ($env:UVR_CUDA_VERSION) { $env:UVR_CUDA_VERSION } else { "cu124" }
+$ForceBuild = if ($env:UVR_FORCE_BUILD) { $true } else { $false }
 
 # ------------------------------------------------------------------------------
 # Helper Functions
@@ -138,8 +148,36 @@ function Convert-ToDockerPath {
 }
 
 # ------------------------------------------------------------------------------
-# Build Docker Image
+# Pull or Build Docker Image
 # ------------------------------------------------------------------------------
+function Pull-Image {
+    param(
+        [string]$Target,
+        [string]$LocalTag
+    )
+    
+    # Map target to Docker Hub tag
+    if ($Target -eq "gpu") {
+        $HubTag = "${DockerHubImage}:latest"
+    } else {
+        $HubTag = "${DockerHubImage}:latest-cpu"
+    }
+    
+    Write-Info "Pulling pre-built image from Docker Hub: $HubTag"
+    Write-Info "This is much faster than building locally!"
+    
+    docker pull $HubTag
+    if ($LASTEXITCODE -eq 0) {
+        # Tag the pulled image with our local tag for consistency
+        docker tag $HubTag $LocalTag
+        Write-Success "Image pulled and tagged: $LocalTag"
+        return $true
+    } else {
+        Write-Warn "Failed to pull from Docker Hub"
+        return $false
+    }
+}
+
 function Build-Image {
     param(
         [string]$Target,
@@ -152,11 +190,20 @@ function Build-Image {
         $Tag = "${ImageName}:${Target}"
     }
     
-    Write-Info "Building Docker image: $Tag"
+    # Try pulling from Docker Hub first (unless force build is set)
+    if (-not $ForceBuild -and -not $Build) {
+        if (Pull-Image -Target $Target -LocalTag $Tag) {
+            return
+        }
+        Write-Info "Falling back to local build..."
+        Write-Host ""
+    }
+    
+    Write-Info "Building Docker image locally: $Tag"
     if ($Target -eq "gpu") {
         Write-Info "CUDA version: $CudaVersion (requires driver $(Get-CudaDriverRequirement $CudaVersion))"
     }
-    Write-Info "This may take several minutes on first build..."
+    Write-Info "This may take 10-30 minutes on first build..."
     
     Push-Location $ProjectRoot
     try {
@@ -589,8 +636,13 @@ if ($Help) {
     Write-Host "  -Gpu           Force GPU installation (uses default CUDA version)"
     Write-Host "  -Cuda VERSION  GPU installation with specific CUDA version"
     Write-Host "                 VERSION: cu121, cu124 (default), cu128"
+    Write-Host "  -Build         Force local build instead of pulling from Docker Hub"
     Write-Host "  -Uninstall     Remove installed CLI wrappers"
     Write-Host "  -Help          Show this help message"
+    Write-Host ""
+    Write-Host "Image Source:"
+    Write-Host "  By default, the script pulls pre-built images from Docker Hub (fast!)"
+    Write-Host "  Use -Build to force local building (slower, but uses latest code)"
     Write-Host ""
     Write-Host "CUDA Versions:"
     Write-Host "  cu121 - CUDA 12.1, requires NVIDIA driver 530+"
@@ -601,6 +653,7 @@ if ($Help) {
     Write-Host "  UVR_INSTALL_DIR    Installation directory (default: %LOCALAPPDATA%\UVR)"
     Write-Host "  UVR_MODELS_DIR     Model cache directory (default: %USERPROFILE%\.uvr_models)"
     Write-Host "  UVR_CUDA_VERSION   CUDA version (default: cu124)"
+    Write-Host "  UVR_FORCE_BUILD    Set to 1 to force local build"
     Write-Host "  UVR_DEBUG          Set to 1 to show debug output"
     Write-Host ""
     Write-Host "Proxy Support (auto-passthrough if set):"
@@ -609,11 +662,14 @@ if ($Help) {
     Write-Host "  NO_PROXY           Comma-separated list of hosts to bypass proxy"
     Write-Host ""
     Write-Host "Examples:"
+    Write-Host "  # Quick install (pulls from Docker Hub)"
+    Write-Host "  .\install.ps1"
+    Write-Host ""
     Write-Host "  # Install GPU with CUDA 12.1 (for older drivers)"
     Write-Host "  .\install.ps1 -Cuda cu121"
     Write-Host ""
-    Write-Host "  # Install GPU with CUDA 12.4 (recommended)"
-    Write-Host "  .\install.ps1 -Gpu"
+    Write-Host "  # Force local build with GPU"
+    Write-Host "  .\install.ps1 -Gpu -Build"
     exit 0
 }
 

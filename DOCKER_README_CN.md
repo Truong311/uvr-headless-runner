@@ -124,17 +124,17 @@ docker/
 
 ```bash
 # 构建 GPU 镜像 (默认 CUDA 12.4)
-docker build -t uvr-headless:gpu -f docker/Dockerfile --target gpu .
+docker build -t uvr-headless-runner:gpu -f docker/Dockerfile --target gpu .
 
 # 构建 GPU 镜像并指定 CUDA 版本
-docker build -t uvr-headless:gpu-cu121 -f docker/Dockerfile --target gpu \
+docker build -t uvr-headless-runner:gpu-cu121 -f docker/Dockerfile --target gpu \
   --build-arg CUDA_VERSION=cu121 .
 
 # 构建 CPU 镜像
-docker build -t uvr-headless:cpu -f docker/Dockerfile --target cpu .
+docker build -t uvr-headless-runner:cpu -f docker/Dockerfile --target cpu .
 
 # 通过代理构建 (企业网络)
-docker build -t uvr-headless:gpu -f docker/Dockerfile --target gpu \
+docker build -t uvr-headless-runner:gpu -f docker/Dockerfile --target gpu \
   --build-arg HTTP_PROXY=http://proxy:8080 \
   --build-arg HTTPS_PROXY=http://proxy:8080 .
 ```
@@ -159,7 +159,7 @@ docker run --rm -it --gpus all \
   -v ~/.uvr_models:/models \
   -v $(pwd)/input:/input:ro \
   -v $(pwd)/output:/output \
-  uvr-headless:gpu \
+  uvr-headless-runner:gpu \
   uvr-mdx -m "UVR-MDX-NET Inst HQ 3" -i /input/song.wav -o /output/
 
 # CPU 模式
@@ -167,7 +167,7 @@ docker run --rm -it \
   -v ~/.uvr_models:/models \
   -v $(pwd)/input:/input:ro \
   -v $(pwd)/output:/output \
-  uvr-headless:cpu \
+  uvr-headless-runner:cpu \
   uvr-mdx -m "UVR-MDX-NET Inst HQ 3" -i /input/song.wav -o /output/
 ```
 
@@ -392,7 +392,7 @@ docker compose run --rm uvr uvr mdx --list  # 运行时使用代理
 docker run --rm -it \
   -e HTTP_PROXY=http://proxy:8080 \
   -e HTTPS_PROXY=http://proxy:8080 \
-  uvr-headless:gpu uvr info
+  uvr-headless-runner:gpu uvr info
 ```
 
 > **安全说明**: 代理 URL 可能包含凭据。它们会传递到容器中，但故意不会出现在调试日志中，以防止意外泄露。
@@ -456,7 +456,7 @@ curl -x http://proxy:8080 -I https://github.com
 docker build \
   --build-arg HTTP_PROXY=http://proxy:8080 \
   --build-arg HTTPS_PROXY=http://proxy:8080 \
-  -t uvr-headless:gpu -f docker/Dockerfile --target gpu .
+  -t uvr-headless-runner:gpu -f docker/Dockerfile --target gpu .
 ```
 
 ### 查看日志
@@ -479,7 +479,7 @@ uvr-mdx -m <model> -i <input> -o <output> --quiet
 .\docker\install.ps1 -Uninstall
 
 # 删除 Docker 镜像
-docker rmi uvr-headless:gpu uvr-headless:cpu
+docker rmi uvr-headless-runner:gpu uvr-headless-runner:cpu
 
 # 删除模型缓存
 rm -rf ~/.uvr_models
