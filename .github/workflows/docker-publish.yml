@@ -91,6 +91,10 @@ jobs:
             org.opencontainers.image.licenses=MIT
       
       # 构建并推送 GPU 镜像
+      # NOTE: Currently only builds cu124. If you add support for other CUDA versions
+      # (cu121, cu128), update install.sh and install.ps1 pull_image/Pull-Image functions
+      # which currently skip Docker Hub pull for non-cu124 versions and fall back to
+      # local build. Consider using a matrix strategy for multi-CUDA builds.
       - name: Build and push GPU image
         uses: docker/build-push-action@v5
         with:

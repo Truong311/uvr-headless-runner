@@ -60,7 +60,8 @@ normalize_proxy_vars() {
 # SECURITY: Only reports presence, never the actual URL (may contain credentials)
 is_proxy_configured() {
     [ -n "${HTTP_PROXY:-}" ] || [ -n "${http_proxy:-}" ] || \
-    [ -n "${HTTPS_PROXY:-}" ] || [ -n "${https_proxy:-}" ]
+    [ -n "${HTTPS_PROXY:-}" ] || [ -n "${https_proxy:-}" ] || \
+    [ -n "${ALL_PROXY:-}" ] || [ -n "${all_proxy:-}" ]
 }
 
 # Get safe proxy status string (no credentials)

@@ -53,6 +53,12 @@ services:
     image: uvr-headless-runner:gpu-${CUDA_VERSION:-cu124}
     container_name: uvr-headless-gpu
     
+    # Ensure host.docker.internal resolves on Linux
+    # (Docker Desktop on macOS/Windows resolves it natively)
+    # Required for host-based proxy access from inside the container
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    
     # NVIDIA GPU support with resource limits
     deploy:
       resources:
@@ -68,20 +74,25 @@ services:
               capabilities: [gpu]
     
     # Environment
-    # Proxy variables are passed through automatically if set in host environment
     environment:
       - UVR_DEVICE=cuda
       - UVR_MODELS_DIR=/models
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
       # HTTP/HTTPS Proxy passthrough (runtime, for model downloads)
-      # These use the empty-default syntax to only set if host has them defined
-      - HTTP_PROXY=${HTTP_PROXY:-}
-      - HTTPS_PROXY=${HTTPS_PROXY:-}
-      - NO_PROXY=${NO_PROXY:-}
-      - http_proxy=${http_proxy:-}
-      - https_proxy=${https_proxy:-}
-      - no_proxy=${no_proxy:-}
+      # NOTE: Using the variable-name-only syntax (no = or default) so Docker
+      # only sets the variable inside the container when it IS set on the host.
+      # The old syntax `HTTP_PROXY=${HTTP_PROXY:-}` would set HTTP_PROXY="" when
+      # unset on the host, which causes some HTTP libraries to try using an empty
+      # proxy URL and fail with confusing connection errors.
+      - HTTP_PROXY
+      - HTTPS_PROXY
+      - NO_PROXY
+      - http_proxy
+      - https_proxy
+      - no_proxy
+      - ALL_PROXY
+      - all_proxy
     
     # Volumes
     volumes:
@@ -131,6 +142,10 @@ services:
     profiles:
       - cpu
     
+    # Ensure host.docker.internal resolves on Linux
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    
     # Resource limits for CPU mode
     deploy:
       resources:
@@ -140,17 +155,19 @@ services:
           memory: ${UVR_MEMORY_RESERVATION:-4G}
     
     # Environment
-    # Proxy variables are passed through automatically if set in host environment
     environment:
       - UVR_DEVICE=cpu
       - UVR_MODELS_DIR=/models
       # HTTP/HTTPS Proxy passthrough (runtime, for model downloads)
-      - HTTP_PROXY=${HTTP_PROXY:-}
-      - HTTPS_PROXY=${HTTPS_PROXY:-}
-      - NO_PROXY=${NO_PROXY:-}
-      - http_proxy=${http_proxy:-}
-      - https_proxy=${https_proxy:-}
-      - no_proxy=${no_proxy:-}
+      # Using variable-name-only syntax: only set when present on host
+      - HTTP_PROXY
+      - HTTPS_PROXY
+      - NO_PROXY
+      - http_proxy
+      - https_proxy
+      - no_proxy
+      - ALL_PROXY
+      - all_proxy
     
     # Volumes
     volumes:
