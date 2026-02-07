@@ -38,20 +38,37 @@ This project provides a Docker deployment solution for Ultimate Vocal Remover (U
 ./docker/install.sh --cuda cu128   # CUDA 12.8, driver 560+
 ```
 
-**Windows (PowerShell):**
-```powershell
-# Auto-detect GPU support (default CUDA 12.4)
-.\docker\install.ps1
+**Windows (double-click or command line):**
 
-# Force specific mode
-.\docker\install.ps1 -Gpu   # GPU mode (CUDA 12.4)
-.\docker\install.ps1 -Cpu   # CPU mode
+> 💡 We recommend using `install.bat`. This batch script automatically launches PowerShell with `Bypass` execution policy, so you **don't need to modify system execution policies manually** — avoiding the common "cannot be loaded because running scripts is disabled" error when running `install.ps1` directly.
 
-# Specify CUDA version
-.\docker\install.ps1 -Cuda cu121   # CUDA 12.1, driver 530+
-.\docker\install.ps1 -Cuda cu124   # CUDA 12.4, driver 550+ (default)
-.\docker\install.ps1 -Cuda cu128   # CUDA 12.8, driver 560+
+```bat
+REM Double-click docker\install.bat, or run from the command line:
+
+REM Auto-detect GPU support (default CUDA 12.4)
+docker\install.bat
+
+REM Force specific mode
+docker\install.bat -Gpu   REM GPU mode (CUDA 12.4)
+docker\install.bat -Cpu   REM CPU mode
+
+REM Specify CUDA version
+docker\install.bat -Cuda cu121   REM CUDA 12.1, driver 530+
+docker\install.bat -Cuda cu124   REM CUDA 12.4, driver 550+ (default)
+docker\install.bat -Cuda cu128   REM CUDA 12.8, driver 560+
 ```
+
+<details>
+<summary>If you've already configured PowerShell execution policy, you can also run .ps1 directly</summary>
+
+```powershell
+.\docker\install.ps1
+.\docker\install.ps1 -Gpu
+.\docker\install.ps1 -Cpu
+.\docker\install.ps1 -Cuda cu121
+```
+
+</details>
 
 ### Usage Examples
 
@@ -81,7 +98,8 @@ docker/
 ├── docker-compose.yml   # Docker Compose configuration
 ├── entrypoint.sh        # Container entrypoint script
 ├── install.sh           # Linux/macOS installation script
-├── install.ps1          # Windows installation script
+├── install.bat          # Windows installation script (recommended, auto-bypasses execution policy)
+├── install.ps1          # Windows installation script (PowerShell core logic)
 └── bin/
     ├── uvr              # Unified CLI entry point
     ├── uvr-mdx          # MDX-Net dedicated CLI
@@ -476,7 +494,7 @@ uvr-mdx -m <model> -i <input> -o <output> --quiet
 ./docker/install.sh --uninstall
 
 # Windows
-.\docker\install.ps1 -Uninstall
+docker\install.bat -Uninstall
 
 # Remove Docker images
 docker rmi uvr-headless-runner:gpu uvr-headless-runner:cpu

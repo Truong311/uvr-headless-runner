@@ -38,20 +38,37 @@
 ./docker/install.sh --cuda cu128   # CUDA 12.8, 驱动 560+
 ```
 
-**Windows (PowerShell):**
-```powershell
-# 自动检测 GPU 支持 (默认 CUDA 12.4)
-.\docker\install.ps1
+**Windows (双击或命令行):**
 
-# 强制指定模式
-.\docker\install.ps1 -Gpu   # GPU 模式 (CUDA 12.4)
-.\docker\install.ps1 -Cpu   # CPU 模式
+> 💡 推荐使用 `install.bat`。该批处理脚本会自动以 `Bypass` 执行策略启动 PowerShell，**无需手动修改系统执行策略**，避免了 `install.ps1` 直接运行时常见的 "无法加载文件...未对文件进行数字签名" 权限错误。
 
-# 指定 CUDA 版本
-.\docker\install.ps1 -Cuda cu121   # CUDA 12.1, 驱动 530+
-.\docker\install.ps1 -Cuda cu124   # CUDA 12.4, 驱动 550+ (默认)
-.\docker\install.ps1 -Cuda cu128   # CUDA 12.8, 驱动 560+
+```bat
+REM 双击 docker\install.bat 即可，或在命令行中运行：
+
+REM 自动检测 GPU 支持 (默认 CUDA 12.4)
+docker\install.bat
+
+REM 强制指定模式
+docker\install.bat -Gpu   REM GPU 模式 (CUDA 12.4)
+docker\install.bat -Cpu   REM CPU 模式
+
+REM 指定 CUDA 版本
+docker\install.bat -Cuda cu121   REM CUDA 12.1, 驱动 530+
+docker\install.bat -Cuda cu124   REM CUDA 12.4, 驱动 550+ (默认)
+docker\install.bat -Cuda cu128   REM CUDA 12.8, 驱动 560+
 ```
+
+<details>
+<summary>如果你已配置 PowerShell 执行策略，也可以直接运行 .ps1</summary>
+
+```powershell
+.\docker\install.ps1
+.\docker\install.ps1 -Gpu
+.\docker\install.ps1 -Cpu
+.\docker\install.ps1 -Cuda cu121
+```
+
+</details>
 
 ### 使用示例
 
@@ -81,7 +98,8 @@ docker/
 ├── docker-compose.yml   # Docker Compose 配置
 ├── entrypoint.sh        # 容器入口脚本
 ├── install.sh           # Linux/macOS 安装脚本
-├── install.ps1          # Windows 安装脚本
+├── install.bat          # Windows 安装脚本 (推荐，自动绕过执行策略)
+├── install.ps1          # Windows 安装脚本 (PowerShell 核心逻辑)
 └── bin/
     ├── uvr              # 统一 CLI 入口
     ├── uvr-mdx          # MDX-Net 专用 CLI
@@ -476,7 +494,7 @@ uvr-mdx -m <model> -i <input> -o <output> --quiet
 ./docker/install.sh --uninstall
 
 # Windows
-.\docker\install.ps1 -Uninstall
+docker\install.bat -Uninstall
 
 # 删除 Docker 镜像
 docker rmi uvr-headless-runner:gpu uvr-headless-runner:cpu
