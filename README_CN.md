@@ -804,6 +804,13 @@ python vr_headless_runner.py -m "model.pth" -i "song.wav" -o "output/" \
 <br/>
 <sub><b>Woosung Choi</b></sub>
 </td>
+<td align="center">
+<a href="https://github.com/tsurumeso/vocal-remover">
+<img src="https://img.shields.io/badge/Tsurumeso-VR%20Architecture-orange?style=for-the-badge" alt="VR Architecture"/>
+</a>
+<br/>
+<sub><b>tsurumeso</b></sub>
+</td>
 </tr>
 </table>
 
