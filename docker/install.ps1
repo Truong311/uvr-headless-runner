@@ -1168,6 +1168,98 @@ for (`$i = 0; `$i -lt `$args.Count; `$i++) {
             }
         }
     }
+    # ── Local Model Path Auto-Mount ──────────────────────────────────
+    # Detects when -m receives a host filesystem path (not a registry
+    # model name) and auto-mounts the directory into the container.
+    # This makes locally downloaded models (e.g. from UVR GUI) work
+    # inside Docker with zero additional configuration.
+    elseif (`$arg -eq "-m" -or `$arg -eq "--model") {
+        `$ProcessedArgs += `$arg
+        `$i++
+        if (`$i -lt `$args.Count) {
+            `$modelPath = `$args[`$i]
+            
+            if (Test-Path `$modelPath -PathType Leaf) {
+                # Local model file found — auto-mount its directory (read-only)
+                if (`$env:UVR_DEBUG) {
+                    Write-Host "[DEBUG] Detected local model path: `$modelPath" -ForegroundColor Gray
+                    Write-Host "[DEBUG] Model path not mounted, auto-mounting..." -ForegroundColor Gray
+                }
+                `$absPath = (Resolve-Path `$modelPath).Path
+                `$dir = Split-Path `$absPath -Parent
+                `$dockerPath = Convert-ToDockerPath `$absPath
+                `$dockerDir = Convert-ToDockerPath `$dir
+                
+                if (-not `$MountedDirs.ContainsKey(`$dir)) {
+                    `$MountedDirs[`$dir] = @{ DockerDir = `$dockerDir; Mode = "ro" }
+                }
+                if (`$env:UVR_DEBUG) {
+                    Write-Host "[DEBUG] Remapped to container path: `$dockerPath" -ForegroundColor Gray
+                }
+                `$ProcessedArgs += `$dockerPath
+            }
+            elseif (`$modelPath -match '^[A-Za-z]:[/\\\\]' -or `$modelPath -match '^[/\\\\]' -or `$modelPath -match '^\.\\.?[/\\\\]') {
+                # Looks like a file path but doesn't exist — preflight error
+                Write-Host "" -ForegroundColor Red
+                Write-Host "============================================================" -ForegroundColor Red
+                Write-Host "ERROR: Local model file not found" -ForegroundColor Red
+                Write-Host "============================================================" -ForegroundColor Red
+                Write-Host ""
+                Write-Host "  Path: `$modelPath"
+                Write-Host ""
+                Write-Host "The path appears to be a local file, but does not exist." -ForegroundColor Yellow
+                Write-Host ""
+                Write-Host "Please verify:" -ForegroundColor Yellow
+                Write-Host "  1. The file path is correct (check for typos)"
+                Write-Host "  2. The model file has been downloaded"
+                Write-Host ""
+                Write-Host "Tip: Use --list to see available registry models."
+                exit 1
+            }
+            else {
+                # Not a file path — treat as registry model name (pass through)
+                `$ProcessedArgs += `$modelPath
+            }
+        }
+    }
+    elseif (`$arg -eq "--json") {
+        # JSON config file path — auto-mount if it exists locally
+        `$ProcessedArgs += `$arg
+        `$i++
+        if (`$i -lt `$args.Count) {
+            `$jsonPath = `$args[`$i]
+            if (Test-Path `$jsonPath -PathType Leaf) {
+                `$absPath = (Resolve-Path `$jsonPath).Path
+                `$dir = Split-Path `$absPath -Parent
+                `$dockerPath = Convert-ToDockerPath `$absPath
+                `$dockerDir = Convert-ToDockerPath `$dir
+                if (-not `$MountedDirs.ContainsKey(`$dir)) {
+                    `$MountedDirs[`$dir] = @{ DockerDir = `$dockerDir; Mode = "ro" }
+                }
+                `$ProcessedArgs += `$dockerPath
+            } else {
+                `$ProcessedArgs += `$jsonPath
+            }
+        }
+    }
+    elseif (`$arg -eq "--model-dir") {
+        # Model directory path — auto-mount if it exists locally
+        `$ProcessedArgs += `$arg
+        `$i++
+        if (`$i -lt `$args.Count) {
+            `$mdirPath = `$args[`$i]
+            if (Test-Path `$mdirPath -PathType Container) {
+                `$absPath = (Resolve-Path `$mdirPath).Path
+                `$dockerPath = Convert-ToDockerPath `$absPath
+                if (-not `$MountedDirs.ContainsKey(`$absPath)) {
+                    `$MountedDirs[`$absPath] = @{ DockerDir = `$dockerPath; Mode = "ro" }
+                }
+                `$ProcessedArgs += `$dockerPath
+            } else {
+                `$ProcessedArgs += `$mdirPath
+            }
+        }
+    }
     else {
         `$ProcessedArgs += `$arg
     }

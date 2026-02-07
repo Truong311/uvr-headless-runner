@@ -156,12 +156,54 @@ def download_model(model_name: str, verbose: bool = True) -> tuple:
     return downloader.download_model(model_name, 'vr')
 
 
+def _detect_host_path(path_str: str):
+    """
+    Detect if a path string appears to be a host OS path not accessible inside this container.
+    
+    Returns:
+        'windows' if it looks like a Windows absolute path (C:\\...)
+        'wsl' if it looks like a WSL-mounted path (/mnt/c/...)
+        None if it's not a host-specific path pattern
+    """
+    import re
+    if re.match(r'^[A-Za-z]:[/\\]', path_str):
+        return 'windows'
+    if re.match(r'^/mnt/[a-z]/', path_str):
+        return 'wsl'
+    return None
+
+
+def _try_find_model_by_basename(basename: str, search_dirs: list):
+    """Search for a model file by its basename in standard directories (1-level deep)."""
+    for search_dir in search_dirs:
+        if not os.path.isdir(search_dir):
+            continue
+        candidate = os.path.join(search_dir, basename)
+        if os.path.isfile(candidate):
+            return candidate
+        try:
+            for subdir in os.listdir(search_dir):
+                subdir_path = os.path.join(search_dir, subdir)
+                if os.path.isdir(subdir_path):
+                    candidate = os.path.join(subdir_path, basename)
+                    if os.path.isfile(candidate):
+                        return candidate
+        except OSError:
+            continue
+    return None
+
+
 def resolve_model_path(model_identifier: str, verbose: bool = True, progress_callback=None) -> str:
     """
     解析模型标识符并返回本地模型路径
     
     如果模型标识符是一个存在的文件路径，直接返回。
     如果模型标识符是模型名称且本地不存在，尝试从远程下载。
+    
+    Supports:
+    - Direct file paths (local or mounted)
+    - Registry model names (auto-download)
+    - Host OS paths (Windows/WSL) with auto-detection and helpful errors
     
     Args:
         model_identifier: 模型路径或模型名称
@@ -180,6 +222,52 @@ def resolve_model_path(model_identifier: str, verbose: bool = True, progress_cal
             print(f"使用本地模型文件: {model_identifier}")
         return model_identifier
     
+    # ── 检测宿主机文件系统路径（如 Docker 中传入的 Windows 路径）──────
+    host_path_type = _detect_host_path(model_identifier)
+    if host_path_type:
+        model_basename = os.path.basename(model_identifier.replace('\\', '/'))
+        models_dir = os.environ.get('UVR_MODELS_DIR', '/models')
+        custom_models_dir = os.environ.get('UVR_CUSTOM_MODELS_DIR', '/uvr_models')
+        search_dirs = [
+            custom_models_dir,
+            models_dir,
+            os.path.join(models_dir, 'VR_Models'),
+            VR_MODELS_DIR,
+        ]
+        
+        found = _try_find_model_by_basename(model_basename, search_dirs)
+        if found:
+            if verbose:
+                print(f"[INFO] Detected local model path ({host_path_type}), "
+                      f"found mounted model: {found}")
+            return found
+        
+        raise FileNotFoundError(
+            f"\n{'='*60}\n"
+            f"ERROR: Local model path not accessible in container\n"
+            f"{'='*60}\n"
+            f"\n"
+            f"Host path: {model_identifier}\n"
+            f"Path type: {host_path_type}\n"
+            f"\n"
+            f"The model file exists on your host machine but was not\n"
+            f"mounted into the Docker container.\n"
+            f"\n"
+            f"Solutions:\n"
+            f"\n"
+            f"  1. Use the CLI wrapper (auto-mounts model paths):\n"
+            f"     uvr-vr -m \"{model_identifier}\" -i input.wav -o output/\n"
+            f"\n"
+            f"  2. Manually mount the model directory:\n"
+            f"     docker run \\\n"
+            f"       -v \"/path/to/model/dir:/uvr_models:ro\" \\\n"
+            f"       ... \\\n"
+            f"       -m \"/uvr_models/{model_basename}\"\n"
+            f"\n"
+            f"  3. Use a registry model name (no mounting needed):\n"
+            f"     uvr-vr --list   # see available models\n"
+        )
+    
     # 2. 尝试在 VR_MODELS_DIR 中查找
     if not model_identifier.endswith('.pth'):
         model_filename = f"{model_identifier}.pth"
@@ -191,6 +279,19 @@ def resolve_model_path(model_identifier: str, verbose: bool = True, progress_cal
         if verbose:
             print(f"找到本地模型: {local_path}")
         return local_path
+    
+    # 2b. 也检查自定义模型挂载点和环境变量指定的路径
+    models_dir = os.environ.get('UVR_MODELS_DIR', '/models')
+    custom_models_dir = os.environ.get('UVR_CUSTOM_MODELS_DIR', '/uvr_models')
+    extra_search = [
+        os.path.join(custom_models_dir, model_filename),
+        os.path.join(models_dir, 'VR_Models', model_filename),
+    ]
+    for candidate in extra_search:
+        if os.path.isfile(candidate):
+            if verbose:
+                print(f"找到本地模型: {candidate}")
+            return candidate
     
     # 3. 尝试通过模型名称在远程注册表中查找
     downloader = get_model_downloader(verbose=verbose)

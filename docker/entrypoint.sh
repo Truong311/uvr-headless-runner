@@ -168,6 +168,12 @@ setup_model_dirs() {
     # Clean up old cache on startup
     cleanup_old_cache
     
+    # Ensure /uvr_models mount point exists (for custom local model auto-mount)
+    # The CLI wrappers may mount user-specified model paths here.
+    if [ ! -d "/uvr_models" ]; then
+        mkdir -p /uvr_models 2>/dev/null || true
+    fi
+    
     # Check if volume is mounted and writable
     if [ ! -d "${models_dir}" ]; then
         log_error "Models directory does not exist: ${models_dir}"
@@ -264,6 +270,13 @@ print_startup_info() {
     
     echo -e "Models: ${GREEN}${UVR_MODELS_DIR:-/models}${NC}"
     
+    # Show custom models mount status
+    if [ -d "/uvr_models" ] && [ "$(ls -A /uvr_models 2>/dev/null)" ]; then
+        echo -e "Custom Models: ${GREEN}/uvr_models (mounted)${NC}"
+    else
+        echo -e "Custom Models: ${YELLOW}/uvr_models (not mounted)${NC}"
+    fi
+    
     # Show proxy status (without revealing credentials)
     local proxy_status=$(get_proxy_status)
     if [ "${proxy_status}" = "configured" ]; then
@@ -324,6 +337,14 @@ main() {
     elif [ "${UVR_DEVICE}" = "cuda" ] && [ "${detected_device}" = "cpu" ]; then
         log_warn "UVR_DEVICE=cuda but GPU not available, falling back to CPU"
         export UVR_DEVICE="cpu"
+    fi
+    
+    # Ensure UVR_CUSTOM_MODELS_DIR is set for the Python runners
+    export UVR_CUSTOM_MODELS_DIR="${UVR_CUSTOM_MODELS_DIR:-/uvr_models}"
+    
+    # Log if custom models are mounted
+    if [ -d "/uvr_models" ] && [ "$(ls -A /uvr_models 2>/dev/null)" ]; then
+        log_info "Custom models mount detected at /uvr_models"
     fi
     
     # Handle no arguments - show help

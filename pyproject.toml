@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "ultimate-vocal-remover-gui"
-version = "1.0.0"
+version = "1.0.3"
 description = "Headless runners for Ultimate Vocal Remover - MDX/Roformer/SCNet/Demucs"
 authors = ["UVR Headless Runner Contributors"]
 readme = "README.md"

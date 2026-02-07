@@ -1099,6 +1099,85 @@ while [[ $# -gt 0 ]]; do
                 shift
             fi
             ;;
+        -m|--model)
+            # ── Local Model Path Auto-Mount ──────────────────────────────
+            # Detects when -m receives a host filesystem path (not a registry
+            # model name) and auto-mounts the directory into the container.
+            # This makes locally downloaded models (e.g. from UVR GUI) work
+            # inside Docker with zero additional configuration.
+            PROCESSED_ARGS+=("$1")
+            shift
+            if [[ $# -gt 0 ]]; then
+                _MODEL_RAW="$1"
+                if [ -f "$_MODEL_RAW" ]; then
+                    # File exists on host — auto-mount its directory (read-only)
+                    if [ -n "${UVR_DEBUG}" ]; then
+                        echo "[DEBUG] Detected local model path: $_MODEL_RAW" >&2
+                        echo "[DEBUG] Model path not mounted, auto-mounting..." >&2
+                    fi
+                    process_path "$_MODEL_RAW" "ro"
+                    if [ -n "${UVR_DEBUG}" ]; then
+                        echo "[DEBUG] Remapped to container path: ${_RESOLVED_PATH}" >&2
+                    fi
+                    PROCESSED_ARGS+=("${_RESOLVED_PATH}")
+                elif [[ "$_MODEL_RAW" == /* ]] || [[ "$_MODEL_RAW" == ./* ]] || [[ "$_MODEL_RAW" == ~/* ]] || [[ "$_MODEL_RAW" == ../* ]]; then
+                    # Looks like a local path but file not found — preflight error
+                    echo "" >&2
+                    echo "============================================================" >&2
+                    echo "ERROR: Local model file not found" >&2
+                    echo "============================================================" >&2
+                    echo "" >&2
+                    echo "  Path: $_MODEL_RAW" >&2
+                    echo "" >&2
+                    echo "The path appears to be a local file, but does not exist." >&2
+                    echo "" >&2
+                    echo "Please verify:" >&2
+                    echo "  1. The file path is correct (check for typos)" >&2
+                    echo "  2. The model file has been downloaded" >&2
+                    echo "" >&2
+                    echo "Tip: Use --list to see available registry models." >&2
+                    exit 1
+                else
+                    # Not a file path — treat as registry model name (pass through)
+                    PROCESSED_ARGS+=("$_MODEL_RAW")
+                fi
+                shift
+            fi
+            ;;
+        --json)
+            # JSON config file path — auto-mount if it exists locally
+            PROCESSED_ARGS+=("$1")
+            shift
+            if [[ $# -gt 0 ]]; then
+                if [ -f "$1" ]; then
+                    process_path "$1" "ro"
+                    PROCESSED_ARGS+=("${_RESOLVED_PATH}")
+                elif [[ "$1" == /* ]] || [[ "$1" == ./* ]] || [[ "$1" == ~/* ]]; then
+                    echo "ERROR: JSON config file not found: $1" >&2
+                    exit 1
+                else
+                    PROCESSED_ARGS+=("$1")
+                fi
+                shift
+            fi
+            ;;
+        --model-dir)
+            # Model directory path — auto-mount if it exists locally
+            PROCESSED_ARGS+=("$1")
+            shift
+            if [[ $# -gt 0 ]]; then
+                if [ -d "$1" ]; then
+                    process_path "$1" "ro"
+                    PROCESSED_ARGS+=("${_RESOLVED_PATH}")
+                elif [[ "$1" == /* ]] || [[ "$1" == ./* ]] || [[ "$1" == ~/* ]]; then
+                    echo "ERROR: Model directory not found: $1" >&2
+                    exit 1
+                else
+                    PROCESSED_ARGS+=("$1")
+                fi
+                shift
+            fi
+            ;;
         *)
             PROCESSED_ARGS+=("$1")
             shift

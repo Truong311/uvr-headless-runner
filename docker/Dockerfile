@@ -208,6 +208,7 @@ RUN dos2unix /entrypoint.sh || true && chmod +x /entrypoint.sh
 
 # Environment variables
 ENV UVR_MODELS_DIR=/models \
+    UVR_CUSTOM_MODELS_DIR=/uvr_models \
     UVR_DEVICE=cpu \
     NUMBA_CACHE_DIR=/tmp/numba_cache \
     PYTHONWARNINGS="ignore::UserWarning:pkg_resources"
@@ -220,13 +221,15 @@ RUN mkdir -p /app/models_data/VR_Models /app/models_data/MDX_Net_Models /app/mod
     if [ -d /app/models/Apollo_Models ]; then cp -r /app/models/Apollo_Models/* /app/models_data/Apollo_Models/ 2>/dev/null || true; fi
 
 # Create symlinks for model directories to use mounted volume
+# Also create /uvr_models as a mount point for local custom models
+# (the CLI wrappers auto-mount user-specified model paths here)
 RUN rm -rf /app/models/VR_Models /app/models/MDX_Net_Models /app/models/Demucs_Models /app/models/Apollo_Models 2>/dev/null || true && \
-    mkdir -p /app/models && \
+    mkdir -p /app/models /uvr_models && \
     ln -sf /models/VR_Models /app/models/VR_Models && \
     ln -sf /models/MDX_Net_Models /app/models/MDX_Net_Models && \
     ln -sf /models/Demucs_Models /app/models/Demucs_Models && \
     ln -sf /models/Apollo_Models /app/models/Apollo_Models && \
-    chown -R uvr:uvr /app/models /app/models_data
+    chown -R uvr:uvr /app/models /app/models_data /uvr_models
 
 # Switch to non-root user
 USER uvr
@@ -331,6 +334,7 @@ RUN dos2unix /entrypoint.sh || true && chmod +x /entrypoint.sh
 
 # Environment variables
 ENV UVR_MODELS_DIR=/models \
+    UVR_CUSTOM_MODELS_DIR=/uvr_models \
     UVR_DEVICE=cuda \
     NUMBA_CACHE_DIR=/tmp/numba_cache \
     NVIDIA_VISIBLE_DEVICES=all \
@@ -344,14 +348,16 @@ RUN mkdir -p /app/models_data/VR_Models /app/models_data/MDX_Net_Models /app/mod
     if [ -d /app/models/Demucs_Models/model_data ]; then cp -r /app/models/Demucs_Models/model_data /app/models_data/Demucs_Models/; fi && \
     if [ -d /app/models/Apollo_Models ]; then cp -r /app/models/Apollo_Models/* /app/models_data/Apollo_Models/ 2>/dev/null || true; fi
 
-# Create symlinks for model directories
+# Create symlinks for model directories to use mounted volume
+# Also create /uvr_models as a mount point for local custom models
+# (the CLI wrappers auto-mount user-specified model paths here)
 RUN rm -rf /app/models/VR_Models /app/models/MDX_Net_Models /app/models/Demucs_Models /app/models/Apollo_Models 2>/dev/null || true && \
-    mkdir -p /app/models && \
+    mkdir -p /app/models /uvr_models && \
     ln -sf /models/VR_Models /app/models/VR_Models && \
     ln -sf /models/MDX_Net_Models /app/models/MDX_Net_Models && \
     ln -sf /models/Demucs_Models /app/models/Demucs_Models && \
     ln -sf /models/Apollo_Models /app/models/Apollo_Models && \
-    chown -R uvr:uvr /app/models /app/models_data
+    chown -R uvr:uvr /app/models /app/models_data /uvr_models
 
 # Switch to non-root user
 USER uvr

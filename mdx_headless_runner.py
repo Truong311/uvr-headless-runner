@@ -162,12 +162,67 @@ def download_model(model_name: str) -> tuple:
     return downloader.download_model(model_name, 'mdx')
 
 
+def _detect_host_path(path_str: str):
+    """
+    Detect if a path string appears to be a host OS path not accessible inside this container.
+    
+    This catches cases where users pass Windows/WSL paths directly to Docker
+    (e.g. docker run ... -m "C:\\Users\\...\\model.ckpt") without mounting them.
+    
+    Returns:
+        'windows' if it looks like a Windows absolute path (C:\\...)
+        'wsl' if it looks like a WSL-mounted path (/mnt/c/...)
+        None if it's not a host-specific path pattern
+    """
+    import re
+    # Windows absolute path: C:\ or C:/ or D:\
+    if re.match(r'^[A-Za-z]:[/\\]', path_str):
+        return 'windows'
+    # WSL-style mount path
+    if re.match(r'^/mnt/[a-z]/', path_str):
+        return 'wsl'
+    return None
+
+
+def _try_find_model_by_basename(basename: str, search_dirs: list):
+    """
+    Search for a model file by its basename in standard directories.
+    
+    Checks the given directories and their immediate subdirectories.
+    Used as a fallback when a host path is detected but the file might
+    have been mounted under a different path.
+    """
+    for search_dir in search_dirs:
+        if not os.path.isdir(search_dir):
+            continue
+        # Direct match
+        candidate = os.path.join(search_dir, basename)
+        if os.path.isfile(candidate):
+            return candidate
+        # One-level subdirectory search
+        try:
+            for subdir in os.listdir(search_dir):
+                subdir_path = os.path.join(search_dir, subdir)
+                if os.path.isdir(subdir_path):
+                    candidate = os.path.join(subdir_path, basename)
+                    if os.path.isfile(candidate):
+                        return candidate
+        except OSError:
+            continue
+    return None
+
+
 def resolve_model_path(model_identifier: str, verbose: bool = True, progress_callback=None) -> str:
     """
     Resolve a model identifier to a local file path.
     
     If the identifier is a path to an existing file, return it.
     If it's a model name, look it up in the registry and download if needed.
+    
+    Supports:
+    - Direct file paths (local or mounted)
+    - Registry model names (auto-download)
+    - Host OS paths (Windows/WSL) with auto-detection and helpful errors
     
     Args:
         model_identifier: File path or model name
@@ -184,13 +239,72 @@ def resolve_model_path(model_identifier: str, verbose: bool = True, progress_cal
     if os.path.isfile(model_identifier):
         return model_identifier
     
+    # ── Detect host filesystem paths (e.g. Windows paths inside Docker) ──────
+    # When running inside Docker, a user may pass a host-side path like
+    # C:\Users\...\model.ckpt which doesn't exist in the Linux container.
+    # If the CLI wrapper auto-mounted it, the file will be found by os.path.isfile
+    # above. Otherwise, try to find by basename or provide clear guidance.
+    host_path_type = _detect_host_path(model_identifier)
+    if host_path_type:
+        # Extract basename (normalize backslashes for Windows paths)
+        model_basename = os.path.basename(model_identifier.replace('\\', '/'))
+        
+        # Search in standard model directories
+        models_dir = os.environ.get('UVR_MODELS_DIR', '/models')
+        custom_models_dir = os.environ.get('UVR_CUSTOM_MODELS_DIR', '/uvr_models')
+        search_dirs = [
+            custom_models_dir,                            # custom model mount point
+            models_dir,                                   # default model volume
+            os.path.join(models_dir, 'MDX_Net_Models'),   # MDX subdirectory
+        ]
+        
+        found = _try_find_model_by_basename(model_basename, search_dirs)
+        if found:
+            if verbose:
+                print(f"[INFO] Detected local model path ({host_path_type}), "
+                      f"found mounted model: {found}")
+            return found
+        
+        # Not found — provide clear, actionable error
+        raise FileNotFoundError(
+            f"\n{'='*60}\n"
+            f"ERROR: Local model path not accessible in container\n"
+            f"{'='*60}\n"
+            f"\n"
+            f"Host path: {model_identifier}\n"
+            f"Path type: {host_path_type}\n"
+            f"\n"
+            f"The model file exists on your host machine but was not\n"
+            f"mounted into the Docker container.\n"
+            f"\n"
+            f"Solutions:\n"
+            f"\n"
+            f"  1. Use the CLI wrapper (auto-mounts model paths):\n"
+            f"     uvr-mdx -m \"{model_identifier}\" -i input.wav -o output/\n"
+            f"\n"
+            f"  2. Manually mount the model directory:\n"
+            f"     docker run \\\n"
+            f"       -v \"/path/to/model/dir:/uvr_models:ro\" \\\n"
+            f"       ... \\\n"
+            f"       -m \"/uvr_models/{model_basename}\"\n"
+            f"\n"
+            f"  3. Use a registry model name (no mounting needed):\n"
+            f"     uvr-mdx --list   # see available models\n"
+        )
+    
     # Check if it's a path that might exist in standard locations
-    if os.path.sep in model_identifier or '/' in model_identifier:
+    if os.path.sep in model_identifier or '/' in model_identifier or '\\' in model_identifier:
         # It looks like a path - try some common bases
+        # Normalize path separators for cross-platform compatibility
+        normalized_basename = os.path.basename(model_identifier.replace('\\', '/'))
+        models_dir = os.environ.get('UVR_MODELS_DIR', '/models')
+        
         candidates = [
             model_identifier,
             os.path.join(SCRIPT_DIR, model_identifier),
-            os.path.join(SCRIPT_DIR, 'models', 'MDX_Net_Models', os.path.basename(model_identifier)),
+            os.path.join(SCRIPT_DIR, 'models', 'MDX_Net_Models', normalized_basename),
+            os.path.join(models_dir, 'MDX_Net_Models', normalized_basename),
+            os.path.join(os.environ.get('UVR_CUSTOM_MODELS_DIR', '/uvr_models'), normalized_basename),
         ]
         for candidate in candidates:
             if os.path.isfile(candidate):
